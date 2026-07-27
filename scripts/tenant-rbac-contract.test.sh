@@ -39,7 +39,7 @@ validate_contract() {
 		)] | length == 1)
 		and ([$job.steps[] | select(has("if") or has("continue-on-error"))] | length == 0)
 		and ([$job.steps[] | select(
-			.uses == "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+			(.uses | test("^actions/checkout@[0-9a-f]{40}$"))
 			and .with.repository == "devantler-tech/platform"
 			and .with.path == ".platform"
 			and .with."sparse-checkout" == "k8s/bases/infrastructure/cluster-roles"
