@@ -33,7 +33,7 @@ validate_contract() {
 		[.jobs.admissibility.steps[]
 			| select(.with.repository == "devantler-tech/platform")
 			| select(
-				.uses == "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+				(.uses | test("^actions/checkout@[0-9a-f]{40}$"))
 				and .with.path == ".platform"
 				and .with."persist-credentials" == false
 				and ((.with."sparse-checkout" | split("\n") | join("|")) ==

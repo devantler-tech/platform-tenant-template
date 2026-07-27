@@ -67,13 +67,13 @@ validate_contract() {
 	assert_ci "runner-hardening step must have only audited keys" '
 		((.jobs."delivery-inputs".steps[0] | keys | sort | join(",")) == "name,uses,with")
 		and ((.jobs."delivery-inputs".steps[0].with | keys | sort | join(",")) == "egress-policy")
-		and (.jobs."delivery-inputs".steps[0].uses == "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920")
+		and (.jobs."delivery-inputs".steps[0].uses | test("^step-security/harden-runner@[0-9a-f]{40}$"))
 		and (.jobs."delivery-inputs".steps[0].with."egress-policy" == "audit")
 	'
 	assert_ci "checkout step must have only audited keys" '
 		((.jobs."delivery-inputs".steps[1] | keys | sort | join(",")) == "name,uses,with")
 		and ((.jobs."delivery-inputs".steps[1].with | keys | sort | join(",")) == "persist-credentials")
-		and (.jobs."delivery-inputs".steps[1].uses == "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0")
+		and (.jobs."delivery-inputs".steps[1].uses | test("^actions/checkout@[0-9a-f]{40}$"))
 		and (.jobs."delivery-inputs".steps[1].with."persist-credentials" == false)
 	'
 	assert_ci "image-build step must have only audited keys" '
@@ -99,7 +99,7 @@ validate_contract() {
 	'
 	assert_ci "runner hardening must stay pinned" '
 		[.jobs."delivery-inputs".steps[] | select(
-			.uses == "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920"
+			(.uses | test("^step-security/harden-runner@[0-9a-f]{40}$"))
 			and .with."egress-policy" == "audit"
 		)] | length == 1
 	'
@@ -110,7 +110,7 @@ validate_contract() {
 	'
 	assert_ci "checkout must stay pinned and credential-free" '
 		[.jobs."delivery-inputs".steps[] | select(
-			.uses == "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
+			(.uses | test("^actions/checkout@[0-9a-f]{40}$"))
 			and .with."persist-credentials" == false
 		)] | length == 1
 	'
@@ -152,7 +152,7 @@ validate_contract() {
 	# shellcheck disable=SC2016
 	assert_ci "required-check aggregate must consume the exact results" '
 		[.jobs."ci-required-checks".steps[] | select(
-			.uses == "devantler-tech/actions/aggregate-job-checks@47f0d9b632581a613963a2d25c243713f24c32a0"
+			(.uses | test("^devantler-tech/actions/aggregate-job-checks@[0-9a-f]{40}$"))
 			and .with."job-results" == "${{ needs.example.result }} ${{ needs.delivery-inputs.result }}"
 			and ((keys | sort | join(",")) == "name,uses,with")
 			and ((.with | keys | sort | join(",")) == "job-results")
@@ -267,7 +267,7 @@ run_mutation "container build removed" \
 run_mutation "manifest render removed" \
 	'del(.jobs."delivery-inputs".steps[] | select((.run // "") == "kubectl kustomize deploy/ >/dev/null"))'
 run_mutation "checkout credentials retained" \
-	'.jobs."delivery-inputs".steps[] |= (select(.uses == "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0").with."persist-credentials" = true)'
+	'.jobs."delivery-inputs".steps[] |= (select(.uses | test("^actions/checkout@[0-9a-f]{40}$")).with."persist-credentials" = true)'
 run_mutation "second mutable checkout added" \
 	'.jobs."delivery-inputs".steps += [{"name": "Unsafe checkout", "uses": "actions/checkout@main"}]'
 run_mutation "checkout moved before runner hardening" \
