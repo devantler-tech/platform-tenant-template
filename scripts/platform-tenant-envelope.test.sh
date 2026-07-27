@@ -6,12 +6,21 @@ set -eu
 script_dir=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd)
 repo_root=$(dirname -- "$script_dir")
 publish_workflow=$repo_root/.github/workflows/cd.yaml
-expected_publish_workflow='devantler-tech/actions/.github/workflows/publish-app.yaml@47f0d9b632581a613963a2d25c243713f24c32a0'
+# Asserted by SHAPE, not by revision. The contract is that the tenant calls the
+# shared publish workflow pinned to a full 40-hex commit SHA — pinning the exact
+# SHA here duplicates the workflow's own pin, so every Dependabot bump red-lines
+# main by construction while proving nothing extra.
+expected_publish_workflow='^devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
 # This is the literal GitHub Actions expression the reusable workflow consumes.
 # shellcheck disable=SC2016
 expected_publish_app_name='${{ github.event.repository.name }}'
 expected_oidc_issuer='^https://token\.actions\.githubusercontent\.com$'
-expected_oidc_subject='^https://github\.com/devantler-tech/(reusable-workflows|actions)/\.github/workflows/publish-app\.yaml@.+$'
+# Compared verbatim, not matched: this is the platform's declared trust rule, and
+# asserting the exact text is the security property. It accepts only the shared
+# actions workflow signed from a 40-hex commit SHA or a release tag, so a floating
+# ref does not verify. Kept in step with platform's tenant ResourceGraphDefinition
+# and its live OCIRepository rules, which all carry this identical string.
+expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@([0-9a-f]{40}|refs/tags/v.+)$'
 export expected_publish_workflow expected_publish_app_name
 export expected_oidc_issuer expected_oidc_subject
 
@@ -41,7 +50,7 @@ validate_publish_workflow() {
 		and .jobs.publish.permissions.contents == "read"
 		and .jobs.publish.permissions.packages == "write"
 		and .jobs.publish.permissions."id-token" == "write"
-		and .jobs.publish.uses == strenv(expected_publish_workflow)
+		and (.jobs.publish.uses | test(strenv(expected_publish_workflow)))
 		and .jobs.publish.with."app-name" == strenv(expected_publish_app_name)
 	' "$workflow_file" >/dev/null ||
 		fail "tenant publish workflow no longer has the pinned minimal signing contract"
