@@ -6,10 +6,8 @@ set -eu
 script_dir=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd)
 repo_root=$(dirname -- "$script_dir")
 publish_workflow=$repo_root/.github/workflows/cd.yaml
-# Asserted by SHAPE, not by revision. The contract is that the tenant calls the
-# shared publish workflow pinned to a full 40-hex commit SHA — pinning the exact
-# SHA here duplicates the workflow's own pin, so every Dependabot bump red-lines
-# main by construction while proving nothing extra.
+# Shape, not a specific revision: the producer identity and the requirement that
+# it stay SHA-pinned are the contract; which SHA is Dependabot's business.
 expected_publish_workflow='^devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
 # This is the literal GitHub Actions expression the reusable workflow consumes.
 # shellcheck disable=SC2016
