@@ -43,7 +43,7 @@ validate_publish_workflow() {
 		and ((.permissions | length) == 0)
 		and ((.jobs | length) == 1)
 		and (.jobs | has("publish"))
-		and .jobs.publish.if == "github.repository != '\''devantler-tech/gitops-tenant-template'\''"
+		and .jobs.publish.if == "github.repository != '\''devantler-tech/platform-tenant-template'\''"
 		and ((.jobs.publish.permissions | length) == 3)
 		and .jobs.publish.permissions.contents == "read"
 		and .jobs.publish.permissions.packages == "write"

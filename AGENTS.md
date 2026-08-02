@@ -62,7 +62,7 @@ app — be conservative and never expose its contents publicly.
 
 **Shared plumbing is template-owned:** `cd.yaml`, `release.yaml`,
 `template-sync.yaml`, `CLAUDE.md`, and `zizmor.yml` come from
-[gitops-tenant-template](https://github.com/devantler-tech/gitops-tenant-template)
+[platform-tenant-template](https://github.com/devantler-tech/platform-tenant-template)
 and are kept in sync — propose changes to them upstream, not here.
 
 **Task menu** (conservative; ≤1 item per run): triage issues/PRs; dependency &
