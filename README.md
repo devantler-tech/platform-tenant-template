@@ -1,4 +1,4 @@
-# gitops-tenant-template
+# platform-tenant-template
 
 A template for **GitOps tenants** on the
 [devantler-tech platform](https://github.com/devantler-tech/platform) — an
@@ -14,7 +14,7 @@ fill in the scaffolding.
 ## Use this template
 
 1. Click **"Use this template" → Create a new repository** (or
-   `gh repo create devantler-tech/<tenant> --template devantler-tech/gitops-tenant-template --private`).
+   `gh repo create devantler-tech/<tenant> --template devantler-tech/platform-tenant-template --private`).
 2. **Rename the placeholders** in `deploy/` to your tenant name — run
    [`scripts/rename-placeholders.sh`](scripts/rename-placeholders.sh) (defaults to
    the repo directory name, or pass one: `scripts/rename-placeholders.sh my-tenant`).

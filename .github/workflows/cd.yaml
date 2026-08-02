@@ -12,7 +12,7 @@ jobs:
     name: Publish
     # Skipped in the template repo itself (it ships no app); runs in every tenant
     # created from this template.
-    if: github.repository != 'devantler-tech/gitops-tenant-template'
+    if: github.repository != 'devantler-tech/platform-tenant-template'
     permissions:
       contents: read # checkout
       packages: write # push image + manifests OCI artifact

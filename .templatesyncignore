@@ -10,7 +10,7 @@
 #
 # Everything NOT listed here is TEMPLATE-OWNED shared plumbing kept current in
 # every tenant by template-sync — change those upstream in
-# devantler-tech/gitops-tenant-template, never by editing them in a tenant.
+# devantler-tech/platform-tenant-template, never by editing them in a tenant.
 # Template-owned files: .github/workflows/{cd,release,template-sync,sync-labels}.yaml,
 # CLAUDE.md, zizmor.yml.
 

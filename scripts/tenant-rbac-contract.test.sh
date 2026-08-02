@@ -25,7 +25,7 @@ validate_contract() {
 	[ -f "$runtime_file" ] || fail "tenant RBAC runtime is missing"
 
 	expected_if=$(printf '%s' \
-		"github.repository == 'devantler-tech/gitops-tenant-template'")
+		"github.repository == 'devantler-tech/platform-tenant-template'")
 	export expected_if
 	# shellcheck disable=SC2016
 	if ! yq eval -e '

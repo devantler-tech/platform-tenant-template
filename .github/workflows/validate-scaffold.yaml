@@ -47,7 +47,7 @@ permissions: {}
 jobs:
   validate-scaffold:
     name: Validate Scaffold
-    if: github.repository == 'devantler-tech/gitops-tenant-template'
+    if: github.repository == 'devantler-tech/platform-tenant-template'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout
@@ -77,7 +77,7 @@ jobs:
           workflow=.github/workflows/validate-scaffold.yaml
           expected_if=$(
             printf '%s' \
-              "github.repository == 'devantler-tech/gitops-tenant-template'"
+              "github.repository == 'devantler-tech/platform-tenant-template'"
           )
           export expected_if
           assert_yaml() {
@@ -310,7 +310,7 @@ jobs:
   # admission, just not in this offline gate.
   admissibility:
     name: Platform Admissibility
-    if: github.repository == 'devantler-tech/gitops-tenant-template'
+    if: github.repository == 'devantler-tech/platform-tenant-template'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkouts
@@ -712,7 +712,7 @@ jobs:
   # stays template-only like the other scaffold gates.
   pod-security-admission:
     name: Pod Security and tenant RBAC
-    if: github.repository == 'devantler-tech/gitops-tenant-template'
+    if: github.repository == 'devantler-tech/platform-tenant-template'
     runs-on: ubuntu-latest
     permissions:
       contents: read
