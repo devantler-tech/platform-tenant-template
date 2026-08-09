@@ -368,7 +368,15 @@ cp \
 	"$platform_root/k8s/bases/infrastructure/vault-config/job.yaml" \
 	"$baseline/k8s/bases/infrastructure/vault-config/job.yaml"
 
+# Counted, not hand-written. The PASS line used to carry a literal, and it had
+# drifted to 70 against 65 actual mutations — a number nobody can trust is worse
+# than no number, because it reads as evidence of coverage. `+ 1` rather than
+# ((n++)): under `set -e` the latter returns 1 on the increment from zero and
+# would abort the suite on its first mutation.
+mutations_run=0
+
 run_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	relative_file=$2
 	mutation=$3
@@ -383,6 +391,7 @@ run_mutation() {
 }
 
 run_publish_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	mutant_workflow=$mutation_dir/cd-mutant.yaml
@@ -393,6 +402,7 @@ run_publish_mutation() {
 }
 
 run_vault_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	mutant=$mutation_dir/vault-mutant
@@ -609,4 +619,4 @@ run_publish_mutation "caller SHA-pin enforcement removed" \
 run_publish_mutation "caller SHA-pin enforcement disabled" \
 	'.jobs.publish.with."enable-caller-pin" = false'
 
-echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + 70 safety mutations)"
+echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations)"

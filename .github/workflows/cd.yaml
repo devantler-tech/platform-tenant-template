@@ -24,9 +24,12 @@ jobs:
       # the repository name (the platform's signed-publish convention).
       app-name: ${{ github.event.repository.name }}
       # The signature this publish mints carries the `uses:` ref above in its
-      # certificate, and the cluster's OCIRepository rules accept any 40-hex
-      # revision of publish-app.yaml. A branch or tag ref would therefore let a
-      # superseded revision sign an artifact the cluster still trusts. Requiring
-      # a commit SHA is what makes that acceptance safe rather than incidental —
-      # the publish fails before signing if this line stops being a SHA pin.
+      # certificate, and the platform's OCIRepository rules accept that subject
+      # as `publish-app.yaml@([0-9a-f]{40}|refs/tags/v.+)`. The tag alternative is
+      # the exposure: a tag is mutable, so a moved `v*` tag in the actions repo
+      # would let arbitrary workflow code mint a signature the cluster still
+      # trusts. (A branch ref fails closed instead — the rule rejects it, so the
+      # artifact simply never verifies.) Requiring a commit SHA closes the tag
+      # path from the producer side, so the publish fails before signing rather
+      # than emitting an over-trusted artifact.
       enable-caller-pin: true
