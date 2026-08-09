@@ -23,3 +23,10 @@ jobs:
       # this name in deploy/deployment.yaml. Keep that container's name equal to
       # the repository name (the platform's signed-publish convention).
       app-name: ${{ github.event.repository.name }}
+      # The signature this publish mints carries the `uses:` ref above in its
+      # certificate, and the cluster's OCIRepository rules accept any 40-hex
+      # revision of publish-app.yaml. A branch or tag ref would therefore let a
+      # superseded revision sign an artifact the cluster still trusts. Requiring
+      # a commit SHA is what makes that acceptance safe rather than incidental —
+      # the publish fails before signing if this line stops being a SHA pin.
+      enable-caller-pin: true

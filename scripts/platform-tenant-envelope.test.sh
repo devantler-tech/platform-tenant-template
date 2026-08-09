@@ -50,6 +50,7 @@ validate_publish_workflow() {
 		and .jobs.publish.permissions."id-token" == "write"
 		and (.jobs.publish.uses | test(strenv(expected_publish_workflow)))
 		and .jobs.publish.with."app-name" == strenv(expected_publish_app_name)
+		and .jobs.publish.with."enable-caller-pin" == true
 	' "$workflow_file" >/dev/null ||
 		fail "tenant publish workflow no longer has the pinned minimal signing contract"
 }
@@ -598,5 +599,14 @@ run_publish_mutation "branch publication enabled" \
 	'.["on"].push.branches = ["main"]'
 run_publish_mutation "second package publisher added" \
 	'.jobs.shadow = {"runs-on": "ubuntu-latest", "permissions": {"packages": "write"}, "steps": []}'
+# Both halves are load-bearing, and neither implies the other: a weaker assertion
+# written as has("enable-caller-pin") would still reject the deletion while
+# happily accepting an explicit false — which is the mutation that silently
+# restores the unenforced default. Deleting the pair is what would let the
+# caller-pin requirement decay back to opt-in without a failing test.
+run_publish_mutation "caller SHA-pin enforcement removed" \
+	'del(.jobs.publish.with."enable-caller-pin")'
+run_publish_mutation "caller SHA-pin enforcement disabled" \
+	'.jobs.publish.with."enable-caller-pin" = false'
 
 echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + 70 safety mutations)"
