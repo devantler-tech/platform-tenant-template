@@ -23,3 +23,13 @@ jobs:
       # this name in deploy/deployment.yaml. Keep that container's name equal to
       # the repository name (the platform's signed-publish convention).
       app-name: ${{ github.event.repository.name }}
+      # The signature this publish mints carries the `uses:` ref above in its
+      # certificate, and the platform's OCIRepository rules accept that subject
+      # as `publish-app.yaml@([0-9a-f]{40}|refs/tags/v.+)`. The tag alternative is
+      # the exposure: a tag is mutable, so a moved `v*` tag in the actions repo
+      # would let arbitrary workflow code mint a signature the cluster still
+      # trusts. (A branch ref fails closed instead — the rule rejects it, so the
+      # artifact simply never verifies.) Requiring a commit SHA closes the tag
+      # path from the producer side, so the publish fails before signing rather
+      # than emitting an over-trusted artifact.
+      enable-caller-pin: true

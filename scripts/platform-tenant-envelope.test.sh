@@ -50,6 +50,7 @@ validate_publish_workflow() {
 		and .jobs.publish.permissions."id-token" == "write"
 		and (.jobs.publish.uses | test(strenv(expected_publish_workflow)))
 		and .jobs.publish.with."app-name" == strenv(expected_publish_app_name)
+		and .jobs.publish.with."enable-caller-pin" == true
 	' "$workflow_file" >/dev/null ||
 		fail "tenant publish workflow no longer has the pinned minimal signing contract"
 }
@@ -367,7 +368,22 @@ cp \
 	"$platform_root/k8s/bases/infrastructure/vault-config/job.yaml" \
 	"$baseline/k8s/bases/infrastructure/vault-config/job.yaml"
 
+# Counted, not hand-written — so that adding a mutation cannot leave the PASS
+# line overstating or understating coverage.
+#
+# Increment in every helper that REJECTS a mutant (fails when validation accepts
+# it). That is five helpers, not the three obvious ones: run_vault_duplicate and
+# run_scaffold_mutation do the same job under different names, and a count that
+# skips them under-reports by five. run_vault_prefixed_role_control is
+# deliberately excluded — it asserts the opposite direction (it fails when
+# validation REJECTS), so it is a compatibility control, not a safety mutation.
+#
+# `+ 1` rather than ((n++)): under `set -e` the latter returns 1 on the increment
+# from zero and would abort the suite on its very first mutation.
+mutations_run=0
+
 run_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	relative_file=$2
 	mutation=$3
@@ -382,6 +398,7 @@ run_mutation() {
 }
 
 run_publish_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	mutant_workflow=$mutation_dir/cd-mutant.yaml
@@ -392,6 +409,7 @@ run_publish_mutation() {
 }
 
 run_vault_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	mutant=$mutation_dir/vault-mutant
@@ -406,6 +424,7 @@ run_vault_mutation() {
 }
 
 run_vault_duplicate() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	header=$2
 	terminator=$3
@@ -441,6 +460,7 @@ run_vault_prefixed_role_control() {
 }
 
 run_scaffold_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	relative_file=$2
 	mutation=$3
@@ -598,5 +618,14 @@ run_publish_mutation "branch publication enabled" \
 	'.["on"].push.branches = ["main"]'
 run_publish_mutation "second package publisher added" \
 	'.jobs.shadow = {"runs-on": "ubuntu-latest", "permissions": {"packages": "write"}, "steps": []}'
+# Both halves are load-bearing, and neither implies the other: a weaker assertion
+# written as has("enable-caller-pin") would still reject the deletion while
+# happily accepting an explicit false — which is the mutation that silently
+# restores the unenforced default. Deleting the pair is what would let the
+# caller-pin requirement decay back to opt-in without a failing test.
+run_publish_mutation "caller SHA-pin enforcement removed" \
+	'del(.jobs.publish.with."enable-caller-pin")'
+run_publish_mutation "caller SHA-pin enforcement disabled" \
+	'.jobs.publish.with."enable-caller-pin" = false'
 
-echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + 70 safety mutations)"
+echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations)"
