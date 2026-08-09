@@ -368,11 +368,18 @@ cp \
 	"$platform_root/k8s/bases/infrastructure/vault-config/job.yaml" \
 	"$baseline/k8s/bases/infrastructure/vault-config/job.yaml"
 
-# Counted, not hand-written. The PASS line used to carry a literal, and it had
-# drifted to 70 against 65 actual mutations — a number nobody can trust is worse
-# than no number, because it reads as evidence of coverage. `+ 1` rather than
-# ((n++)): under `set -e` the latter returns 1 on the increment from zero and
-# would abort the suite on its first mutation.
+# Counted, not hand-written — so that adding a mutation cannot leave the PASS
+# line overstating or understating coverage.
+#
+# Increment in every helper that REJECTS a mutant (fails when validation accepts
+# it). That is five helpers, not the three obvious ones: run_vault_duplicate and
+# run_scaffold_mutation do the same job under different names, and a count that
+# skips them under-reports by five. run_vault_prefixed_role_control is
+# deliberately excluded — it asserts the opposite direction (it fails when
+# validation REJECTS), so it is a compatibility control, not a safety mutation.
+#
+# `+ 1` rather than ((n++)): under `set -e` the latter returns 1 on the increment
+# from zero and would abort the suite on its very first mutation.
 mutations_run=0
 
 run_mutation() {
@@ -417,6 +424,7 @@ run_vault_mutation() {
 }
 
 run_vault_duplicate() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	header=$2
 	terminator=$3
@@ -452,6 +460,7 @@ run_vault_prefixed_role_control() {
 }
 
 run_scaffold_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	relative_file=$2
 	mutation=$3
