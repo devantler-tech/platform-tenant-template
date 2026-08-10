@@ -15,10 +15,15 @@ expected_publish_app_name='${{ github.event.repository.name }}'
 expected_oidc_issuer='^https://token\.actions\.githubusercontent\.com$'
 # Compared verbatim, not matched: this is the platform's declared trust rule, and
 # asserting the exact text is the security property. It accepts only the shared
-# actions workflow signed from a 40-hex commit SHA or a release tag, so a floating
-# ref does not verify. Kept in step with platform's tenant ResourceGraphDefinition
-# and its live OCIRepository rules, which all carry this identical string.
-expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@([0-9a-f]{40}|refs/tags/v.+)$'
+# actions workflow signed from a 40-hex commit SHA — no tag and no branch — so
+# every other ref form fails to verify. Kept in step with platform's tenant
+# ResourceGraphDefinition and its live OCIRepository rules, which all carry this
+# identical string.
+#
+# Because the comparison is verbatim, a platform-side change to the rule lands
+# here as a scheduled-run failure rather than a PR failure: this repository holds
+# the assertion, and platform holds the value.
+expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
 export expected_publish_workflow expected_publish_app_name
 export expected_oidc_issuer expected_oidc_subject
 
