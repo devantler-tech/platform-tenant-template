@@ -25,11 +25,11 @@ jobs:
       app-name: ${{ github.event.repository.name }}
       # The signature this publish mints carries the `uses:` ref above in its
       # certificate, and the platform's OCIRepository rules accept that subject
-      # as `publish-app.yaml@([0-9a-f]{40}|refs/tags/v.+)`. The tag alternative is
-      # the exposure: a tag is mutable, so a moved `v*` tag in the actions repo
-      # would let arbitrary workflow code mint a signature the cluster still
-      # trusts. (A branch ref fails closed instead — the rule rejects it, so the
-      # artifact simply never verifies.) Requiring a commit SHA closes the tag
-      # path from the producer side, so the publish fails before signing rather
-      # than emitting an over-trusted artifact.
+      # as `publish-app.yaml@[0-9a-f]{40}` — SHA-only, with no tag alternative —
+      # so any other ref form fails closed in-cluster: the artifact publishes but
+      # never verifies, and the tenant silently stops reconciling.
+      #
+      # Enabling the guard adds the producer-side half: the publish refuses to
+      # sign at all, before the build, so a bad ref surfaces here as a failed
+      # release instead of as an artifact the cluster quietly rejects.
       enable-caller-pin: true
