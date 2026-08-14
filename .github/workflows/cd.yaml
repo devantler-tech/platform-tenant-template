@@ -17,7 +17,7 @@ jobs:
       contents: read # checkout
       packages: write # push image + manifests OCI artifact
       id-token: write # keyless cosign signing (via GitHub OIDC)
-    uses: devantler-tech/actions/.github/workflows/publish-app.yaml@8349b0935ade387313cf1a92d17dc068d92daee1 # v13.0.1
+    uses: devantler-tech/actions/.github/workflows/publish-app.yaml@a286df5616b1aa89a0136d0eed82b462dbac7585 # v13.0.7
     with:
       # publish-app pins the freshly built image digest into the container with
       # this name in deploy/deployment.yaml. Keep that container's name equal to
