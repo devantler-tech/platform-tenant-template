@@ -11,7 +11,9 @@ identity=system:serviceaccount:tenant-rbac-test:tenant-reconciler
 work_dir=$(mktemp -d)
 
 cleanup() {
-	kubectl delete namespace "$namespace" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+	if kubectl delete namespace "$namespace" --ignore-not-found --timeout=60s >/dev/null 2>&1; then
+		kubectl wait --for=delete "namespace/$namespace" --timeout=60s >/dev/null 2>&1 || true
+	fi
 	rm -rf "$work_dir"
 }
 trap cleanup EXIT

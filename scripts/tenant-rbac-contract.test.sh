@@ -67,6 +67,9 @@ validate_contract() {
 		'SubjectAccessReview response lacks boolean status.allowed' \
 		'sar_subresource' \
 		"kubectl delete namespace \"\$namespace\"" \
+		'kubectl wait --for=delete' \
+		"namespace/\$namespace" \
+		'--timeout=60s' \
 		'--dry-run=client -o yaml' \
 		'namespace-manifest.yaml' \
 		'service-account-manifest.yaml' \
@@ -278,4 +281,4 @@ exercise_runtime_failure malformed 'SubjectAccessReview response lacks boolean s
 exercise_runtime_failure partial 'tenant-edit aggregation did not grant every role fragment'
 exercise_runtime_success subresource
 
-echo "PASS: tenant RBAC contract (happy path + ${mutations_run} safety mutations + ${controls_run} runtime error controls)"
+echo "PASS: tenant RBAC contract (happy path + ${mutations_run} safety mutations + ${controls_run} runtime controls)"

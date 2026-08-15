@@ -106,6 +106,12 @@ validate_contract() {
 	# shellcheck disable=SC2016
 	[ "$(grep -Ec '^validate_platform_route_hostnames "\$platform_root" "\$http_route"$' "$runtime_file")" -eq 1 ] ||
 		fail "live Platform route-domain validation is not invoked exactly once"
+	[ "$(grep -Ec '^run_service_mutation "' "$runtime_file")" -eq 3 ] ||
+		fail "Service mutation controls are not invoked exactly three times"
+	[ "$(grep -Ec '^run_deployment_mutation "' "$runtime_file")" -eq 1 ] ||
+		fail "Deployment mutation control is not invoked exactly once"
+	[ "$(grep -Ec '^run_http_route_mutation "' "$runtime_file")" -eq 8 ] ||
+		fail "HTTPRoute mutation controls are not invoked exactly eight times"
 
 	owned_ignore_block=$(awk '
 		/^\*\*Yours \(list these in `\.templatesyncignore`\):\*\*$/ { found = 1; next }
@@ -141,8 +147,10 @@ validate_contract "$workflow" "$runtime" "$readme" "$template_sync_ignore"
 
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
+mutations_run=0
 
 run_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	workflow_mutation=$2
 	runtime_mutation=$3
@@ -206,6 +214,9 @@ run_mutation "rendered scaffold validation removed" '' '/kubectl kustomize/d'
 run_mutation "live Platform route-domain validation removed" '' \
 	"/^validate_platform_route_hostnames \"\$platform_root\" \"\$http_route\"$/d"
 run_mutation "route-domain mutation controls removed" '' '/run_hostname_mutation/d'
+run_mutation "Service mutation control invocations removed" '' '/^run_service_mutation "/d'
+run_mutation "Deployment mutation control invocation removed" '' '/^run_deployment_mutation "/d'
+run_mutation "HTTPRoute mutation control invocations removed" '' '/^run_http_route_mutation "/d'
 run_mutation "README runtime ownership marker removed" '' '' \
 	'/^scripts\/platform-network-floor\.test\.sh$/d'
 run_mutation ".templatesyncignore runtime marker removed" '' '' '' \
@@ -220,4 +231,4 @@ run_mutation "README ownership table marker removed" '' '' \
 run_mutation "README local validation marker removed" '' '' \
 	'/sh scripts\/platform-network-floor-contract\.test\.sh/d'
 
-echo "PASS: Platform network-floor contract (happy path + 24 safety mutations)"
+echo "PASS: Platform network-floor contract (happy path + ${mutations_run} safety mutations)"
