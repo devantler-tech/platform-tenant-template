@@ -458,6 +458,9 @@ run_vault_prefixed_role_control() {
 	vault_mutant=$mutant/k8s/bases/infrastructure/vault-config/job.yaml
 	sed 's|auth/kubernetes/role/wedding-app|auth/kubernetes/role/ascoachingogvaner-legacy|' \
 		"$vault_mutant" > "$mutation_dir/vault-prefixed-role.yaml"
+	if cmp -s "$vault_mutant" "$mutation_dir/vault-prefixed-role.yaml"; then
+		fail "OpenBao prefixed-role control did not mutate the baseline: $description"
+	fi
 	mv "$mutation_dir/vault-prefixed-role.yaml" "$vault_mutant"
 	if ! (validate_platform "$mutant") >/dev/null 2>&1; then
 		fail "OpenBao authorization compatibility control failed: $description"
