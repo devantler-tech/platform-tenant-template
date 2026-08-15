@@ -269,6 +269,8 @@ jobs:
         # These files become tenant-owned immediately after creation, so a stale
         # trust or promotion rule cannot be repaired by template sync later.
         run: sh scripts/agent-instructions.test.sh
+      - name: 🔑 Validate tenant workflow caller contract
+        run: sh scripts/workflow-caller-contract.test.sh
       - name: 🧪 Validate default tenant CI contract
         # ci.yaml becomes tenant-owned after adoption. Pin the delivery-input
         # checks that must survive when the placeholder stack job is replaced.
