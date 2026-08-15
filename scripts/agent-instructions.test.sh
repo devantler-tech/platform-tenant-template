@@ -145,8 +145,8 @@ run_mutation() {
 			>> "$mutation_dir/AGENTS.md"
 		;;
 	remove-exact-head)
-		sed 's/\*\*exact$/\*\*branch/' \
-			"$mutation_dir/AGENTS.md" > "$mutation_dir/AGENTS.tmp"
+		tr '\n' ' ' < "$mutation_dir/AGENTS.md" |
+			sed 's/exact current head/branch head/g' > "$mutation_dir/AGENTS.tmp"
 		mv "$mutation_dir/AGENTS.tmp" "$mutation_dir/AGENTS.md"
 		;;
 	remove-exact-head-review)
@@ -160,8 +160,8 @@ run_mutation() {
 		mv "$mutation_dir/AGENTS.tmp" "$mutation_dir/AGENTS.md"
 		;;
 	remove-ownership-procedure)
-		sed 's/^routine.s creation record/optional routine record/' \
-			"$mutation_dir/AGENTS.md" > "$mutation_dir/AGENTS.tmp"
+		tr '\n' ' ' < "$mutation_dir/AGENTS.md" |
+			sed "s/routine's creation record/optional routine record/g" > "$mutation_dir/AGENTS.tmp"
 		mv "$mutation_dir/AGENTS.tmp" "$mutation_dir/AGENTS.md"
 		;;
 	weaken-external-boundary)

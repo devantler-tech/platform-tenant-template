@@ -11,6 +11,7 @@ identity=system:serviceaccount:tenant-rbac-test:tenant-reconciler
 work_dir=$(mktemp -d)
 
 cleanup() {
+	kubectl delete namespace "$namespace" --ignore-not-found --wait=false >/dev/null 2>&1 || true
 	rm -rf "$work_dir"
 }
 trap cleanup EXIT
@@ -36,12 +37,18 @@ do
 	kubectl apply -f "$platform_roles_dir/$role_file" >/dev/null
 done
 
-kubectl create namespace "$namespace" >/dev/null
-kubectl create serviceaccount "$service_account" --namespace "$namespace" >/dev/null
+kubectl create namespace "$namespace" \
+	--dry-run=client -o yaml > "$work_dir/namespace-manifest.yaml"
+kubectl apply -f "$work_dir/namespace-manifest.yaml" >/dev/null
+kubectl create serviceaccount "$service_account" --namespace "$namespace" \
+	--dry-run=client -o yaml > "$work_dir/service-account-manifest.yaml"
+kubectl apply -f "$work_dir/service-account-manifest.yaml" >/dev/null
 kubectl create rolebinding tenant-reconciler \
 	--namespace "$namespace" \
 	--clusterrole tenant-edit \
-	--serviceaccount "$namespace:$service_account" >/dev/null
+	--serviceaccount "$namespace:$service_account" \
+	--dry-run=client -o yaml > "$work_dir/role-binding-manifest.yaml"
+kubectl apply -f "$work_dir/role-binding-manifest.yaml" >/dev/null
 
 kubectl kustomize "$repo_root/deploy" > "$work_dir/rendered.yaml"
 actual_inventory=$(yq eval-all -o=json -I=0 '[.]' "$work_dir/rendered.yaml" |
@@ -71,12 +78,22 @@ subject_access_allowed() {
 	sar_qualified_resource=$2
 	sar_namespace=$3
 	case "$sar_qualified_resource" in
-		*.*)
-			sar_resource=${sar_qualified_resource%%.*}
-			sar_api_group=${sar_qualified_resource#*.}
+		*/*)
+			sar_resource_with_group=${sar_qualified_resource%%/*}
+			sar_subresource=${sar_qualified_resource#*/}
 			;;
 		*)
-			sar_resource=$sar_qualified_resource
+			sar_resource_with_group=$sar_qualified_resource
+			sar_subresource=
+			;;
+	esac
+	case "$sar_resource_with_group" in
+		*.*)
+			sar_resource=${sar_resource_with_group%%.*}
+			sar_api_group=${sar_resource_with_group#*.}
+			;;
+		*)
+			sar_resource=$sar_resource_with_group
 			sar_api_group=
 			;;
 	esac
@@ -88,6 +105,7 @@ subject_access_allowed() {
 		--arg verb "$sar_verb" \
 		--arg group "$sar_api_group" \
 		--arg resource "$sar_resource" \
+		--arg subresource "$sar_subresource" \
 		--arg namespace "$sar_namespace" '
 		{
 		  apiVersion: "authorization.k8s.io/v1",
@@ -96,6 +114,7 @@ subject_access_allowed() {
 		    user: $user,
 		    resourceAttributes: ({verb: $verb, resource: $resource}
 		      + (if $group == "" then {} else {group: $group} end)
+		      + (if $subresource == "" then {} else {subresource: $subresource} end)
 		      + (if $namespace == "" then {} else {namespace: $namespace} end))
 		  }
 		}

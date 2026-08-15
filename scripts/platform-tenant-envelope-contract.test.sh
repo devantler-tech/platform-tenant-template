@@ -95,6 +95,7 @@ validate_contract() {
 		'sourceRef' \
 		'targetNamespace' \
 		'validate_openbao_authorization' \
+		'OpenBao prefixed-role control did not mutate the baseline' \
 		'secret/data/apps/' \
 		'secret/metadata/apps/' \
 		'bound_service_account_names' \
@@ -160,8 +161,10 @@ validate_contract \
 
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
+mutations_run=0
 
 run_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	workflow_mutation=$2
 	runtime_mutation=$3
@@ -240,4 +243,4 @@ run_mutation "Pod Security context removed" '' '' \
 run_mutation "RBAC context removed" '' '' '' \
 	'/tenant-edit/d'
 
-echo "PASS: Platform tenant-envelope contract (happy path + 15 safety mutations)"
+echo "PASS: Platform tenant-envelope contract (happy path + ${mutations_run} safety mutations)"

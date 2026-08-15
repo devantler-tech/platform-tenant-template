@@ -89,6 +89,9 @@ validate_contract() {
 		'run_additional_platform_policy_mutation' \
 		'run_scaffold_mutation' \
 		'run_rendered_scaffold_mutation' \
+		'run_service_mutation' \
+		'run_deployment_mutation' \
+		'run_http_route_mutation' \
 		'validate_platform_route_hostnames' \
 		'run_hostname_mutation' \
 		'k8s/clusters/local/bootstrap/config-map.yaml' \
@@ -123,6 +126,8 @@ validate_contract() {
 	# shellcheck disable=SC2016
 	grep -Fq '`scripts/platform-network-floor*.test.sh`' "$readme_file" ||
 		fail "README ownership table lacks the Platform network-floor contract"
+	grep -Fq 'sh scripts/platform-network-floor-contract.test.sh' "$readme_file" ||
+		fail "README local validation lacks the Platform network-floor contract"
 }
 
 if [ "${1:-}" = "--validate" ]; then
@@ -199,11 +204,20 @@ run_mutation "all-rules execution validation removed" '' '/applyRules/d'
 run_mutation "HTTPRoute backend group validation removed" '' '/\.group \/\/ ""/d'
 run_mutation "rendered scaffold validation removed" '' '/kubectl kustomize/d'
 run_mutation "live Platform route-domain validation removed" '' \
-	'/^validate_platform_route_hostnames "\$platform_root" "\$http_route"$/d'
+	"/^validate_platform_route_hostnames \"\$platform_root\" \"\$http_route\"$/d"
 run_mutation "route-domain mutation controls removed" '' '/run_hostname_mutation/d'
 run_mutation "README runtime ownership marker removed" '' '' \
 	'/^scripts\/platform-network-floor\.test\.sh$/d'
 run_mutation ".templatesyncignore runtime marker removed" '' '' '' \
 	'/^scripts\/platform-network-floor\.test\.sh$/d'
+run_mutation "README contract ownership marker removed" '' '' \
+	'/^scripts\/platform-network-floor-contract\.test\.sh$/d'
+run_mutation ".templatesyncignore contract marker removed" '' '' '' \
+	'/^scripts\/platform-network-floor-contract\.test\.sh$/d'
+# shellcheck disable=SC2016
+run_mutation "README ownership table marker removed" '' '' \
+	'/`scripts\/platform-network-floor\*\.test\.sh`/d'
+run_mutation "README local validation marker removed" '' '' \
+	'/sh scripts\/platform-network-floor-contract\.test\.sh/d'
 
-echo "PASS: Platform network-floor contract (happy path + 20 safety mutations)"
+echo "PASS: Platform network-floor contract (happy path + 24 safety mutations)"

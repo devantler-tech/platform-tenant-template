@@ -65,6 +65,12 @@ validate_contract() {
 		'kind: "SubjectAccessReview"' \
 		'SubjectAccessReview request failed' \
 		'SubjectAccessReview response lacks boolean status.allowed' \
+		'sar_subresource' \
+		"kubectl delete namespace \"\$namespace\"" \
+		'--dry-run=client -o yaml' \
+		'namespace-manifest.yaml' \
+		'service-account-manifest.yaml' \
+		'role-binding-manifest.yaml' \
 		'for aggregation_resource in' \
 		'system:serviceaccount:tenant-rbac-test:tenant-reconciler' \
 		'get list watch create patch update delete' \
@@ -114,8 +120,11 @@ validate_contract "$workflow" "$runtime" "$pod_security_runtime" "$readme" "$tem
 
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
+mutations_run=0
+controls_run=0
 
 run_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	workflow_mutation=$2
 	runtime_mutation=$3
@@ -217,15 +226,27 @@ done
 	printf '%s\n' '      [ "$resource" = "deployments" ] && allowed=true || allowed=false'
 	printf '%s\n' '      printf "{\"status\":{\"allowed\":%s}}\n" "$allowed"'
 	printf '%s\n' '      ;;'
+	printf '%s\n' '    subresource)'
+	printf '%s\n' '      resource=$(jq -r ".spec.resourceAttributes.resource" "$3")'
+	printf '%s\n' '      subresource=$(jq -r ".spec.resourceAttributes.subresource // \"\"" "$3")'
+	printf '%s\n' '      if [ "$resource" = "pods" ] && [ "$subresource" = "exec" ]; then'
+	printf '%s\n' '        allowed=false'
+	printf '%s\n' '      else'
+	printf '%s\n' '        case "$resource" in clustersecretstores|ciliumclusterwidenetworkpolicies|namespaces|clusterroles) allowed=false ;; *) allowed=true ;; esac'
+	printf '%s\n' '      fi'
+	printf '%s\n' '      printf "{\"status\":{\"allowed\":%s}}\n" "$allowed"'
+	printf '%s\n' '      ;;'
 	printf '%s\n' '  esac'
 	printf '%s\n' 'fi'
 	printf '%s\n' 'exit 0'
 } > "$fake_bin/kubectl"
 printf '%s\n' '#!/usr/bin/env sh' 'exit 0' > "$fake_bin/sleep"
 chmod +x "$fake_bin/kubectl" "$fake_bin/sleep"
-real_kubectl=$(command -v kubectl)
+real_kubectl=$(command -v kubectl) ||
+	fail "kubectl is required to exercise the tenant RBAC runtime error controls"
 
 exercise_runtime_failure() {
+	controls_run=$((controls_run + 1))
 	mode=$1
 	expected_error=$2
 	if output=$(PATH="$fake_bin:$PATH" \
@@ -239,8 +260,22 @@ exercise_runtime_failure() {
 		fail "runtime did not fail closed for $mode SubjectAccessReview control"
 }
 
+exercise_runtime_success() {
+	mode=$1
+	controls_run=$((controls_run + 1))
+	if ! output=$(PATH="$fake_bin:$PATH" \
+		REAL_KUBECTL="$real_kubectl" \
+		FAKE_SAR_MODE="$mode" \
+		PLATFORM_CLUSTER_ROLES_DIR="$fake_roles" \
+		sh "$runtime" 2>&1); then
+		printf '%s\n' "$output" >&2
+		fail "runtime failed the $mode SubjectAccessReview control"
+	fi
+}
+
 exercise_runtime_failure request-error 'SubjectAccessReview request failed'
 exercise_runtime_failure malformed 'SubjectAccessReview response lacks boolean status.allowed'
 exercise_runtime_failure partial 'tenant-edit aggregation did not grant every role fragment'
+exercise_runtime_success subresource
 
-echo "PASS: tenant RBAC contract (happy path + 14 safety mutations + 3 runtime error controls)"
+echo "PASS: tenant RBAC contract (happy path + ${mutations_run} safety mutations + ${controls_run} runtime error controls)"
