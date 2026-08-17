@@ -6,11 +6,19 @@ metadata:
     app.kubernetes.io/name: app
   # Homepage discovers tenant routes cluster-wide. The rename helper updates
   # the app identity below; tailor the description, group, and icon afterward.
+  #
+  # The group must be one the Homepage dashboard declares in its layout
+  # (k8s/bases/apps/homepage/config-map.yaml in the platform repo): the
+  # restrict-homepage-service-groups ClusterPolicy denies an undeclared group at
+  # admission, so an invented one makes the tenant inadmissible on day one. The
+  # declared set is Internal Developer Platform, Kubernetes, Observability,
+  # Security, Diagnostics, Device Management, Infrastructure as Code, Cloud,
+  # Network, Finance, Analytics, Personal Sites, and Customer Sites.
   annotations:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: app
     gethomepage.dev/description: Tenant application.
-    gethomepage.dev/group: Applications
+    gethomepage.dev/group: Customer Sites
     gethomepage.dev/icon: mdi-application
     gethomepage.dev/href: https://app.platform.devantler.tech
     gethomepage.dev/pod-selector: app.kubernetes.io/name=app
