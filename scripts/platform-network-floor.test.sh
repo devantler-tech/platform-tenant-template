@@ -623,6 +623,8 @@ run_platform_mutation "default-deny egress allowance broadened" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [{"toEntities": ["all"]}]'
 run_platform_mutation "default-deny ingress isolation disabled" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.enableDefaultDeny.ingress) = false'
+run_platform_mutation "default-deny egress isolation disabled" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.enableDefaultDeny.egress) = false'
 run_platform_inventory_mutation "generated floor removed from rendered Platform inventory" \
 	'del(.resources[] | select(. == "best-practices/add-default-deny.yaml"))'
 run_additional_platform_policy_mutation "network policy generated outside add-default-deny" \
@@ -718,4 +720,4 @@ run_http_route_mutation "HTTPRoute backend identity and port split across differ
 run_rendered_scaffold_mutation "Kustomize patch removed rendered Gateway allowance" \
 	'.patches = [{"target": {"kind": "CiliumNetworkPolicy", "name": "app"}, "patch": "- op: remove\n  path: /spec/ingress/0"}]'
 
-echo "PASS: Platform network floor (generated policies + tenant allows + live route domains + 48 safety mutations)"
+echo "PASS: Platform network floor (generated policies + tenant allows + live route domains + 52 safety mutations)"
