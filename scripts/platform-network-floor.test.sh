@@ -68,10 +68,13 @@ validate_network_floor() {
 	[ -f "$deployment" ] || fail "rendered tenant Deployment is missing: $deployment"
 	[ -f "$http_route" ] || fail "rendered tenant HTTPRoute is missing: $http_route"
 
-	# Cilium's IngressDenyRule/EgressDenyRule fields explicitly define an omitted
-	# member as having no effect, so the matchless deny entries reject no traffic;
-	# enableDefaultDeny activates isolation. Any future matcher would take
-	# precedence over the tenant allow policy, so reject that drift explicitly.
+	# Cilium's CRD requires at least one policy direction to be present, so the
+	# generated default-deny carries empty ingress/egress allow lists and relies on
+	# enableDefaultDeny to activate isolation. Empty lists select no traffic, so the
+	# namespace stays fail-closed and the tenant allow policy remains the only thing
+	# that opens it. An ingressDeny/egressDeny entry would take precedence over that
+	# allow policy, and a non-empty ingress/egress would widen the floor, so reject
+	# both drifts explicitly.
 	# Keep independent assertions in an array. yq's boolean operator changes the
 	# input context of its right-hand expression, which can hide missing fields.
 	# shellcheck disable=SC2016
@@ -108,13 +111,18 @@ validate_network_floor() {
 			.generate.name == "default-deny",
 			.generate.namespace == "{{request.object.metadata.name}}",
 			.generate.synchronize == true,
+			(.generate.data.spec | keys | length) == 4,
 			(.generate.data.spec.endpointSelector | keys | length) == 0,
 			.generate.data.spec.enableDefaultDeny.ingress == true,
 			.generate.data.spec.enableDefaultDeny.egress == true,
-			(.generate.data.spec.ingressDeny | [(length == 1), (.[0] | keys | length) == 0] | all),
-			(.generate.data.spec.egressDeny | [(length == 1), (.[0] | keys | length) == 0] | all),
-			(.generate.data.spec | has("ingress") | not),
-			(.generate.data.spec | has("egress") | not)
+			(.generate.data.spec | has("ingress")),
+			(.generate.data.spec.ingress | tag) == "!!seq",
+			(.generate.data.spec.ingress | length) == 0,
+			(.generate.data.spec | has("egress")),
+			(.generate.data.spec.egress | tag) == "!!seq",
+			(.generate.data.spec.egress | length) == 0,
+			(.generate.data.spec | has("ingressDeny") | not),
+			(.generate.data.spec | has("egressDeny") | not)
 		] | all
 	' "$platform_policy" >/dev/null ||
 		fail "Platform generated Cilium default-deny gained a traffic matcher or lost its fail-closed shape"
@@ -611,6 +619,21 @@ run_additional_platform_policy_mutation() {
 
 run_platform_mutation "matched ingress deny introduced" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingressDeny[0].fromEntities) = ["all"]'
+run_platform_mutation "default-deny ingress allowance broadened" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = [{"fromEntities": ["all"]}]'
+run_platform_mutation "default-deny egress allowance broadened" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [{"toEntities": ["all"]}]'
+run_platform_mutation "default-deny ingress isolation disabled" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.enableDefaultDeny.ingress) = false'
+run_platform_mutation "default-deny egress isolation disabled" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.enableDefaultDeny.egress) = false'
+# An empty scalar is not an empty allow list: yq reports length 0 for null and
+# for "", so only the sequence-tag assertion rejects a direction that stopped
+# being a list. Cilium requires the direction to be present AND a list.
+run_platform_mutation "default-deny ingress replaced by a null scalar" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = null'
+run_platform_mutation "default-deny egress replaced by an empty string" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = ""'
 run_platform_inventory_mutation "generated floor removed from rendered Platform inventory" \
 	'del(.resources[] | select(. == "best-practices/add-default-deny.yaml"))'
 run_additional_platform_policy_mutation "network policy generated outside add-default-deny" \
@@ -706,4 +729,4 @@ run_http_route_mutation "HTTPRoute backend identity and port split across differ
 run_rendered_scaffold_mutation "Kustomize patch removed rendered Gateway allowance" \
 	'.patches = [{"target": {"kind": "CiliumNetworkPolicy", "name": "app"}, "patch": "- op: remove\n  path: /spec/ingress/0"}]'
 
-echo "PASS: Platform network floor (generated policies + tenant allows + live route domains + 48 safety mutations)"
+echo "PASS: Platform network floor (generated policies + tenant allows + live route domains + 54 safety mutations)"
