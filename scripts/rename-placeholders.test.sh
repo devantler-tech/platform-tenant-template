@@ -65,7 +65,7 @@ homepage_route_contract() {
 		.metadata.annotations."gethomepage.dev/enabled" == "true" and
 		.metadata.annotations."gethomepage.dev/name" == "app" and
 		.metadata.annotations."gethomepage.dev/description" == "Tenant application." and
-		.metadata.annotations."gethomepage.dev/group" == "Applications" and
+		.metadata.annotations."gethomepage.dev/group" == "Customer Sites" and
 		.metadata.annotations."gethomepage.dev/icon" == "mdi-application" and
 		.metadata.annotations."gethomepage.dev/href" == "https://app.platform.devantler.tech" and
 		.metadata.annotations."gethomepage.dev/pod-selector" == "app.kubernetes.io/name=app"
