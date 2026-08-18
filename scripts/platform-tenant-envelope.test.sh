@@ -600,6 +600,19 @@ run_mutation "manual OCI key verification override added" "$manual_path/oci-repo
 	'(.spec.verify.secretRef.name) = "alternate-cosign-key"'
 run_mutation "manual OCI source suspended" "$manual_path/oci-repository.yaml" \
 	'.spec.suspend = true'
+# The pinned-tag predicate is the only thing standing between this tenant and a
+# mutable artifact reference, so it needs mutants of its own. Each version
+# component is anchored separately, which is why one leading-zero mutant cannot
+# pin the predicate: a partial revert that tightens the major component and
+# leaves the rest as [0-9]+ would still reject "01.2.3" while accepting "1.2.03".
+run_mutation "manual OCI pinned tag floated" "$manual_path/oci-repository.yaml" \
+	'(.spec.ref.tag) = "latest"'
+run_mutation "manual OCI semver range restored" "$manual_path/oci-repository.yaml" \
+	'(.spec.ref.semver) = ">=1.0.0"'
+run_mutation "manual OCI tag major component leading zero" "$manual_path/oci-repository.yaml" \
+	'(.spec.ref.tag) = "01.2.3"'
+run_mutation "manual OCI tag patch component leading zero" "$manual_path/oci-repository.yaml" \
+	'(.spec.ref.tag) = "1.2.03"'
 run_mutation "manual Flux artifact source disconnected" "$manual_path/flux-kustomization.yaml" \
 	'del(.spec.sourceRef)'
 run_mutation "manual Flux artifact source crosses namespace" "$manual_path/flux-kustomization.yaml" \
