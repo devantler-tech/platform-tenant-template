@@ -296,7 +296,8 @@ validate_platform() {
 		.kind == "OCIRepository"
 		and .metadata.name == strenv(tenant_name)
 		and .metadata.namespace == strenv(tenant_name)
-		and .spec.ref.semver == ">=1.0.0"
+		and (.spec.ref | has("semver") | not)
+		and (.spec.ref.tag | test("^[0-9]+\.[0-9]+\.[0-9]+$"))
 		and .spec.url == strenv(expected_manual_oci_url)
 		and .spec.secretRef.name == "ghcr-auth"
 		and ((.spec.suspend // false) == false)
