@@ -44,9 +44,9 @@ validate_contract() {
 		fail 'the template-sync caller must pin template-sync.yaml to a commit SHA'
 
 	template_sync_uses=$(yq eval -r '.jobs."template-sync".uses' "$template_sync_file")
-	[ "$template_sync_uses" != \
-		'devantler-tech/actions/.github/workflows/template-sync.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32' ] ||
-		fail 'the template-sync caller regressed to the v13.1.1 unsigned App-commit path'
+	[ "$template_sync_uses" = \
+		'devantler-tech/actions/.github/workflows/template-sync.yaml@4445e2b5f3d7c5130f04a9640654b71e6fadd1b5' ] ||
+		fail 'the template-sync caller must use the reviewed v13.1.2 signed App-commit path'
 
 	yq eval -e \
 		'.jobs.release.with."disable-issue-side-effects" == true' \
@@ -157,6 +157,8 @@ run_mutation 'template-sync caller SHA pin removed' template-sync \
 	'.jobs."template-sync".uses = "devantler-tech/actions/.github/workflows/template-sync.yaml@main"'
 run_mutation 'template-sync verified App commit path regressed' template-sync \
 	'.jobs."template-sync".uses = "devantler-tech/actions/.github/workflows/template-sync.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32"'
+run_mutation 'template-sync unapproved commit substituted' template-sync \
+	'.jobs."template-sync".uses = "devantler-tech/actions/.github/workflows/template-sync.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 run_mutation 'template-sync App token disabled' template-sync \
 	'.jobs."template-sync".with."use-app-token" = false'
 run_mutation 'required scaffold invocation removed' validation \
