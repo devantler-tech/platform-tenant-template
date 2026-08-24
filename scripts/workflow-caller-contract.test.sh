@@ -99,10 +99,20 @@ validate_contract() {
 	# at a time, which is the wedge itself, and the default when the key is absent is
 	# `version-updates`. Asserting the covering group separately would be subsumed by this one
 	# and could never fail on its own.
+	#
+	# `exclude-patterns` is rejected outright rather than pattern-matched. GitHub applies it AFTER
+	# `patterns`, so a group carrying both an inclusion covering these callers and an exclusion
+	# removing them satisfies an inclusion-only check while Dependabot still opens one PR per
+	# caller — the fail-open this gate exists to close, reintroduced one key lower. Matching
+	# exclusion globs instead would mean deciding whether an arbitrary glob subsumes three
+	# dependency names, which has no bounded expression here and invites exactly the
+	# spelling-by-spelling chase a whitelist ends: this group binds three named dependencies
+	# together, so there is no exclusion it could legitimately carry, and any is refused.
 	yq eval -e \
 		'[.updates[] | select(."package-ecosystem" == "github-actions") | .groups // {} | .[]
 		  | select([.patterns // [] | .[]] | contains(["devantler-tech/*"]))
-		  | select((."applies-to" // "version-updates") == "version-updates")] | length > 0' \
+		  | select((."applies-to" // "version-updates") == "version-updates")
+		  | select(((."exclude-patterns" // []) | length) == 0)] | length > 0' \
 		"$dependabot_file" >/dev/null ||
 		fail 'dependabot must carry a github-actions group whose patterns cover devantler-tech/* and which applies to version updates, so all three callers advance in one pull request; without it the shared-commit assertion above blocks every dependency update'
 
@@ -266,6 +276,10 @@ run_mutation 'dependabot group narrowed so it no longer covers the devantler-tec
 	'(.updates[] | select(."package-ecosystem" == "github-actions") | .groups."devantler-tech-actions".patterns) = ["actions/*"]'
 run_mutation 'dependabot group scoped to security updates, leaving version bumps ungrouped' dependabot \
 	'(.updates[] | select(."package-ecosystem" == "github-actions") | .groups."devantler-tech-actions"."applies-to") = "security-updates"'
+run_mutation 'dependabot group excluding back out the callers it includes' dependabot \
+	'(.updates[] | select(."package-ecosystem" == "github-actions") | .groups."devantler-tech-actions"."exclude-patterns") = ["devantler-tech/*"]'
+run_mutation 'dependabot group excluding a single caller from the group' dependabot \
+	'(.updates[] | select(."package-ecosystem" == "github-actions") | .groups."devantler-tech-actions"."exclude-patterns") = ["devantler-tech/actions/.github/workflows/cd*"]'
 
 
 # A whole-fleet rollback is the case single-file mutation cannot express: every caller still
