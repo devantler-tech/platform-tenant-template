@@ -19,6 +19,14 @@ updates:
       devantler-tech-actions:
         patterns:
           - "devantler-tech/*"
+      # A group applies to EITHER version updates or security updates, never both, and the key
+      # above defaults to `version-updates`. Without this second group a security advisory on one
+      # caller opens an individual PR that fails the same cross-caller assertion — so the pin that
+      # most needs to move is the one that cannot, which is strictly worse than the routine case.
+      devantler-tech-actions-security:
+        applies-to: security-updates
+        patterns:
+          - "devantler-tech/*"
     cooldown:
       default-days: 7
       # devantler-tech actions/workflows are our own code — bump now, no cooldown.
