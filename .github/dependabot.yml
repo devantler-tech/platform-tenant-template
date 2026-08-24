@@ -34,7 +34,7 @@ updates:
       #   action  — open a SEPARATE pull request moving all three callers to one reviewed SHA, which
       #             supersedes the partial one.
       # Until that is automated, an advisory lands only when someone performs this. Automating it is
-      # tracked separately; do not read the group above as covering it.
+      # issue #167; do not read the group above as covering it.
       devantler-tech-actions-security:
         applies-to: security-updates
         patterns:
