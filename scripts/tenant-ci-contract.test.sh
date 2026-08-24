@@ -124,8 +124,8 @@ validate_contract() {
 			(.run // "") == "kubectl kustomize deploy/ >/dev/null"
 		)] | length == 1
 	'
-	assert_ci "required-check aggregate must depend on both jobs exactly" \
-		'(.jobs."ci-required-checks".needs | join(",")) == "example,delivery-inputs"'
+	assert_ci "required-check aggregate must depend on all three jobs exactly" \
+		'(.jobs."ci-required-checks".needs | join(",")) == "workflow-caller-pins,example,delivery-inputs"'
 	# shellcheck disable=SC2016
 	assert_ci "required-check aggregate must run after every result" \
 		'.jobs."ci-required-checks".if == "${{ always() }}"'
@@ -143,7 +143,7 @@ validate_contract() {
 	assert_ci "required-check aggregate must reject non-success results" '
 		[.jobs."ci-required-checks".steps[] | select(
 			.name == "Reject incomplete CI jobs"
-			and .if == "${{ needs.example.result != '\''success'\'' || needs.delivery-inputs.result != '\''success'\'' }}"
+			and .if == "${{ needs.workflow-caller-pins.result != '\''success'\'' || needs.example.result != '\''success'\'' || needs.delivery-inputs.result != '\''success'\'' }}"
 			and .run == "exit 1"
 			and .shell == "bash"
 			and ((keys | sort | join(",")) == "if,name,run,shell")
@@ -153,7 +153,7 @@ validate_contract() {
 	assert_ci "required-check aggregate must consume the exact results" '
 		[.jobs."ci-required-checks".steps[] | select(
 			(.uses | test("^devantler-tech/actions/aggregate-job-checks@[0-9a-f]{40}$"))
-			and .with."job-results" == "${{ needs.example.result }} ${{ needs.delivery-inputs.result }}"
+			and .with."job-results" == "${{ needs.example.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }}"
 			and ((keys | sort | join(",")) == "name,uses,with")
 			and ((.with | keys | sort | join(",")) == "job-results")
 		)] | length == 1
@@ -296,10 +296,15 @@ run_mutation "delivery dependency removed from aggregate" \
 	'.jobs."ci-required-checks".needs = ["example"]'
 run_mutation "delivery dependency replaced with duplicate" \
 	'.jobs."ci-required-checks".needs = ["example", "example"]'
+run_mutation "workflow caller pin dependency removed from aggregate" \
+	'.jobs."ci-required-checks".needs = ["example", "delivery-inputs"]'
 # The GitHub expression is mutation data, not a shell expansion.
 # shellcheck disable=SC2016
 run_mutation "delivery result removed from aggregate" \
 	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.example.result }}"'
+# shellcheck disable=SC2016
+run_mutation "workflow caller pin result removed from aggregate" \
+	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.example.result }} ${{ needs.delivery-inputs.result }}"'
 # shellcheck disable=SC2016
 run_mutation "delivery results coerced before aggregation" \
 	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.example.result == '\''success'\'' }} ${{ needs.delivery-inputs.result == '\''success'\'' }}"'
@@ -326,4 +331,4 @@ run_mutation "scaffolded validation invariant removed" '' '' '' \
 run_mutation "contract ignore removed" '' '' '' '' \
 	'/^scripts\/tenant-ci-contract\.test\.sh$/d'
 
-echo "PASS: tenant CI contract (happy path + 35 safety mutations)"
+echo "PASS: tenant CI contract (happy path + 37 safety mutations)"

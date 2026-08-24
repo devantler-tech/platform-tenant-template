@@ -12,7 +12,7 @@
 # every tenant by template-sync — change those upstream in
 # devantler-tech/platform-tenant-template, never by editing them in a tenant.
 # Template-owned files: .github/workflows/{cd,release,template-sync,sync-labels}.yaml,
-# CLAUDE.md, zizmor.yml.
+# scripts/workflow-caller-pin-contract.test.sh, CLAUDE.md, zizmor.yml.
 
 # --- Identity & docs (tenant-specific) ---
 AGENTS.md

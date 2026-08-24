@@ -8,14 +8,40 @@ cd_workflow=$repo_root/.github/workflows/cd.yaml
 release_workflow=$repo_root/.github/workflows/release.yaml
 template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
 validation_workflow=$repo_root/.github/workflows/validate-scaffold.yaml
+tenant_ci_workflow=$repo_root/.github/workflows/ci.yaml
 readme=$repo_root/README.md
 template_sync_ignore=$repo_root/.templatesyncignore
 dependabot_config=$repo_root/.github/dependabot.yml
+portable_contract=$repo_root/scripts/workflow-caller-pin-contract.test.sh
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
 	exit 1
 }
+
+[ -f "$portable_contract" ] ||
+	fail 'the portable workflow-caller pin contract is missing'
+grep -Fqx 'scripts/workflow-caller-contract.test.sh' "$template_sync_ignore" ||
+	fail 'the scaffold-only workflow-caller contract must stay tenant-ignored'
+if grep -Fqx 'scripts/workflow-caller-pin-contract.test.sh' "$template_sync_ignore"; then
+	fail 'the portable workflow-caller pin contract must reach tenants through template sync'
+fi
+grep -Fq "\`scripts/workflow-caller-pin-contract.test.sh\`" "$readme" ||
+	fail 'README ownership table lacks the portable workflow-caller pin contract'
+grep -Fq 'sh scripts/workflow-caller-pin-contract.test.sh' "$readme" ||
+	fail 'README local validation lacks the portable workflow-caller pin contract'
+yq eval -e '
+	[
+		.jobs."workflow-caller-pins".steps[]
+		| select((.run // "") == "sh scripts/workflow-caller-pin-contract.test.sh")
+	] | length == 1
+' "$tenant_ci_workflow" >/dev/null ||
+	fail 'tenant CI must invoke the portable workflow-caller pin contract'
+yq eval -e '
+	.jobs."ci-required-checks".needs
+	| [.[] | select(. == "workflow-caller-pins")] | length == 1
+' "$tenant_ci_workflow" >/dev/null ||
+	fail 'tenant required checks must depend on the portable workflow-caller pin contract'
 
 validate_contract() {
 	cd_file=$1
@@ -26,64 +52,12 @@ validate_contract() {
 	ignore_file=$6
 	dependabot_file=$7
 
-	yq eval -e \
-		'.jobs.publish.uses | test("^devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}$")' \
-		"$cd_file" >/dev/null ||
-		fail 'the publish caller must pin publish-app.yaml to a commit SHA'
+	sh "$portable_contract" --validate "$cd_file" "$release_file" "$template_sync_file" ||
+		fail 'the portable workflow-caller pin contract rejected the caller set'
 
 	yq eval -e '.jobs.publish.with."enable-caller-pin" == true' \
 		"$cd_file" >/dev/null ||
 		fail 'the publish caller must keep the producer-side ref guard enabled'
-
-	yq eval -e \
-		'.jobs.release.uses | test("^devantler-tech/actions/\\.github/workflows/create-release\\.yaml@[0-9a-f]{40}$")' \
-		"$release_file" >/dev/null ||
-		fail 'the release caller must pin create-release.yaml to a commit SHA'
-
-	yq eval -e \
-		'.jobs."template-sync".uses | test("^devantler-tech/actions/\\.github/workflows/template-sync\\.yaml@[0-9a-f]{40}$")' \
-		"$template_sync_file" >/dev/null ||
-		fail 'the template-sync caller must pin template-sync.yaml to a commit SHA'
-
-	# Every caller must ride the SAME devantler-tech/actions commit, and that commit must be
-	# labelled no older than the reviewed floor below. Shape alone (the `@[0-9a-f]{40}` tests
-	# above) is satisfied by any SHA in either direction, so on its own it cannot tell a forward
-	# bump from a rollback — which is how this template came to hold two different versions at
-	# once, and how template-sync then proposed moving a tenant backwards.
-	#
-	# Boundary: this half is deterministic and offline, so it runs in required CI. It compares
-	# the callers against each other and against a committed floor; it does NOT ask the network
-	# what the newest release is. Detecting that the floor itself has fallen behind upstream is
-	# the network-dependent half and belongs on the scheduled run.
-	#
-	# Residual: the floor is read from each pin's `# vX.Y.Z` line comment, which Dependabot
-	# writes alongside the SHA. A comment that overstates its SHA would pass here; the shared-SHA
-	# assertion bounds that to a single mislabelled commit applied to all three callers, and only
-	# the network-dependent check described above would close it outright.
-	actions_floor_major=13
-	actions_floor_minor=1
-	actions_floor_patch=2
-
-	pinned_ref_of() {
-		yq eval -r "$2 | sub(\".*@\"; \"\")" "$1"
-	}
-	pinned_version_of() {
-		yq eval -r "$2 | line_comment" "$1"
-	}
-
-	cd_ref=$(pinned_ref_of "$cd_file" '.jobs.publish.uses')
-	release_ref=$(pinned_ref_of "$release_file" '.jobs.release.uses')
-	template_sync_ref=$(pinned_ref_of "$template_sync_file" '.jobs."template-sync".uses')
-
-	{ [ "$cd_ref" = "$release_ref" ] && [ "$cd_ref" = "$template_sync_ref" ]; } ||
-		fail 'every devantler-tech/actions caller must pin the same commit, so template-sync cannot carry one workflow forward while rolling another back'
-
-	cd_version=$(pinned_version_of "$cd_file" '.jobs.publish.uses')
-	release_version=$(pinned_version_of "$release_file" '.jobs.release.uses')
-	template_sync_version=$(pinned_version_of "$template_sync_file" '.jobs."template-sync".uses')
-
-	{ [ "$cd_version" = "$release_version" ] && [ "$cd_version" = "$template_sync_version" ]; } ||
-		fail 'every devantler-tech/actions caller must carry the same version comment as its pinned commit'
 
 	# The two assertions above require all three callers to move together. Dependabot treats
 	# each reusable workflow as its own dependency, so with no group it opens one pull request
@@ -126,30 +100,6 @@ validate_contract() {
 		"$dependabot_file" >/dev/null ||
 		fail 'dependabot must carry a github-actions group whose patterns cover devantler-tech/* and which applies to version updates, so all three callers advance in one pull request; without it the shared-commit assertion above blocks every dependency update'
 
-
-	# Anchored and exactly three components. A looser glob such as `v*.*.*` also matches
-	# `v13.1.3.0`, whose fourth component `cut` then silently drops — and a non-numeric
-	# component would reach the arithmetic below, where `[ 1a -lt 13 ]` is an *error* rather
-	# than a false. An error inside an `if` condition evaluates as false, and `set -eu` does
-	# not cover `if` conditions, so anything this gate lets through fails OPEN against the floor.
-	printf '%s\n' "$cd_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
-		fail 'each devantler-tech/actions pin must carry a version comment of the form vX.Y.Z naming the release it points at'
-
-	pinned_major=$(printf '%s' "${cd_version#v}" | cut -d. -f1)
-	pinned_minor=$(printf '%s' "${cd_version#v}" | cut -d. -f2)
-	pinned_patch=$(printf '%s' "${cd_version#v}" | cut -d. -f3)
-
-
-	# Ordered comparison, not equality: a forward bump of all three callers must stay green with
-	# no edit to this test, or the tax of updating it is exactly what produces a stale pin.
-	if [ "$pinned_major" -lt "$actions_floor_major" ] ||
-		{ [ "$pinned_major" -eq "$actions_floor_major" ] &&
-			[ "$pinned_minor" -lt "$actions_floor_minor" ]; } ||
-		{ [ "$pinned_major" -eq "$actions_floor_major" ] &&
-			[ "$pinned_minor" -eq "$actions_floor_minor" ] &&
-			[ "$pinned_patch" -lt "$actions_floor_patch" ]; }; then
-		fail "devantler-tech/actions callers are pinned to $cd_version, older than the reviewed floor v$actions_floor_major.$actions_floor_minor.$actions_floor_patch (signed template-sync App commits, and the harden-runner bump publish-app and create-release carry)"
-	fi
 
 	yq eval -e \
 		'.jobs.release.with."disable-issue-side-effects" == true' \
