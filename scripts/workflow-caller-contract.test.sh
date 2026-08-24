@@ -43,10 +43,76 @@ validate_contract() {
 		"$template_sync_file" >/dev/null ||
 		fail 'the template-sync caller must pin template-sync.yaml to a commit SHA'
 
-	template_sync_uses=$(yq eval -r '.jobs."template-sync".uses' "$template_sync_file")
-	[ "$template_sync_uses" = \
-		'devantler-tech/actions/.github/workflows/template-sync.yaml@4445e2b5f3d7c5130f04a9640654b71e6fadd1b5' ] ||
-		fail 'the template-sync caller must use the reviewed v13.1.2 signed App-commit path'
+	# Every caller must ride the SAME devantler-tech/actions commit, and that commit must be
+	# labelled no older than the reviewed floor below. Shape alone (the `@[0-9a-f]{40}` tests
+	# above) is satisfied by any SHA in either direction, so on its own it cannot tell a forward
+	# bump from a rollback — which is how this template came to hold two different versions at
+	# once, and how template-sync then proposed moving a tenant backwards.
+	#
+	# Boundary: this half is deterministic and offline, so it runs in required CI. It compares
+	# the callers against each other and against a committed floor; it does NOT ask the network
+	# what the newest release is. Detecting that the floor itself has fallen behind upstream is
+	# the network-dependent half and belongs on the scheduled run.
+	#
+	# Residual: the floor is read from each pin's `# vX.Y.Z` line comment, which Dependabot
+	# writes alongside the SHA. A comment that overstates its SHA would pass here; the shared-SHA
+	# assertion bounds that to a single mislabelled commit applied to all three callers, and only
+	# the network-dependent check described above would close it outright.
+	actions_floor_major=13
+	actions_floor_minor=1
+	actions_floor_patch=2
+
+	pinned_ref_of() {
+		yq eval -r "$2 | sub(\".*@\"; \"\")" "$1"
+	}
+	pinned_version_of() {
+		yq eval -r "$2 | line_comment" "$1"
+	}
+
+	cd_ref=$(pinned_ref_of "$cd_file" '.jobs.publish.uses')
+	release_ref=$(pinned_ref_of "$release_file" '.jobs.release.uses')
+	template_sync_ref=$(pinned_ref_of "$template_sync_file" '.jobs."template-sync".uses')
+
+	{ [ "$cd_ref" = "$release_ref" ] && [ "$cd_ref" = "$template_sync_ref" ]; } ||
+		fail 'every devantler-tech/actions caller must pin the same commit, so template-sync cannot carry one workflow forward while rolling another back'
+
+	cd_version=$(pinned_version_of "$cd_file" '.jobs.publish.uses')
+	release_version=$(pinned_version_of "$release_file" '.jobs.release.uses')
+	template_sync_version=$(pinned_version_of "$template_sync_file" '.jobs."template-sync".uses')
+
+	{ [ "$cd_version" = "$release_version" ] && [ "$cd_version" = "$template_sync_version" ]; } ||
+		fail 'every devantler-tech/actions caller must carry the same version comment as its pinned commit'
+
+	case "$cd_version" in
+	v*.*.*) ;;
+	*) fail 'each devantler-tech/actions pin must carry a `# vX.Y.Z` version comment naming the release it points at' ;;
+	esac
+
+	pinned_major=$(printf '%s' "${cd_version#v}" | cut -d. -f1)
+	pinned_minor=$(printf '%s' "${cd_version#v}" | cut -d. -f2)
+	pinned_patch=$(printf '%s' "${cd_version#v}" | cut -d. -f3)
+
+	# Each component must be pure digits before the arithmetic below. `[ 1a -lt 13 ]` is an
+	# error, not a false, and an error inside an `if` condition evaluates as false — so an
+	# unparseable version would silently satisfy the floor rather than trip it.
+	for pinned_component in "$pinned_major" "$pinned_minor" "$pinned_patch"; do
+		case "$pinned_component" in
+		'' | *[!0-9]*)
+			fail "devantler-tech/actions pins carry an unparseable version comment: $cd_version"
+			;;
+		esac
+	done
+
+	# Ordered comparison, not equality: a forward bump of all three callers must stay green with
+	# no edit to this test, or the tax of updating it is exactly what produces a stale pin.
+	if [ "$pinned_major" -lt "$actions_floor_major" ] ||
+		{ [ "$pinned_major" -eq "$actions_floor_major" ] &&
+			[ "$pinned_minor" -lt "$actions_floor_minor" ]; } ||
+		{ [ "$pinned_major" -eq "$actions_floor_major" ] &&
+			[ "$pinned_minor" -eq "$actions_floor_minor" ] &&
+			[ "$pinned_patch" -lt "$actions_floor_patch" ]; }; then
+		fail "devantler-tech/actions callers are pinned to $cd_version, older than the reviewed floor v$actions_floor_major.$actions_floor_minor.$actions_floor_patch (signed template-sync App commits, and the harden-runner bump publish-app and create-release carry)"
+	fi
 
 	yq eval -e \
 		'.jobs.release.with."disable-issue-side-effects" == true' \
@@ -171,5 +237,61 @@ run_mutation 'README local validation marker removed' readme \
 	'/sh scripts\/workflow-caller-contract\.test\.sh/d'
 run_mutation 'actual ownership marker removed' ignore \
 	'/^scripts\/workflow-caller-contract\.test\.sh$/d'
+
+
+# A whole-fleet rollback is the case single-file mutation cannot express: every caller still
+# agrees with every other, so only the version floor can reject it. This is the shape #149 saw
+# in the wild and the one #152 asks for RED/GREEN proof on.
+run_fleet_mutation() {
+	description=$1
+	ref=$2
+	version=$3
+	mutations_run=$((mutations_run + 1))
+
+	cp "$cd_workflow" "$mutation_dir/cd.yaml"
+	cp "$release_workflow" "$mutation_dir/release.yaml"
+	cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
+	cp "$validation_workflow" "$mutation_dir/validation.yaml"
+	cp "$readme" "$mutation_dir/README.md"
+	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
+
+	for pair in \
+		"cd.yaml|.jobs.publish.uses|publish-app" \
+		"release.yaml|.jobs.release.uses|create-release" \
+		"template-sync.yaml|.jobs.\"template-sync\".uses|template-sync"; do
+		mutant_file=${pair%%|*}
+		rest=${pair#*|}
+		mutant_path=${rest%%|*}
+		mutant_workflow=${rest##*|}
+		yq eval \
+			"${mutant_path} = \"devantler-tech/actions/.github/workflows/${mutant_workflow}.yaml@${ref}\" |
+			 ${mutant_path} line_comment = \"${version}\"" \
+			"$mutation_dir/$mutant_file" > "$mutation_dir/mutant.yaml"
+		mv "$mutation_dir/mutant.yaml" "$mutation_dir/$mutant_file"
+	done
+
+	if (validate_contract \
+		"$mutation_dir/cd.yaml" \
+		"$mutation_dir/release.yaml" \
+		"$mutation_dir/template-sync.yaml" \
+		"$mutation_dir/validation.yaml" \
+		"$mutation_dir/README.md" \
+		"$mutation_dir/templatesyncignore") >/dev/null 2>&1; then
+		fail "mutation passed: $description"
+	fi
+}
+
+run_mutation 'publish caller rolled back while the others stay current' cd \
+	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32"'
+run_mutation 'release caller rolled back while the others stay current' release \
+	'.jobs.release.uses = "devantler-tech/actions/.github/workflows/create-release.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32"'
+run_fleet_mutation 'whole fleet rolled back below the reviewed floor' \
+	'b089a1b041cb86af22cdc57de58a4d7d258dcc32' 'v13.1.1'
+run_fleet_mutation 'whole fleet rolled back to the v13.0.7 state #149 recorded' \
+	'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'v13.0.7'
+run_fleet_mutation 'version comment stripped from every pin' \
+	'd72ecd5e8b680c2066a490a2b761a8913c454575' ''
+run_fleet_mutation 'version comment made unparseable on every pin' \
+	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'vLATEST.x.y'
 
 printf 'PASS: tenant workflow caller contract (happy path + %s safety mutations)\n' "$mutations_run"
