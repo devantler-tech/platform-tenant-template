@@ -83,25 +83,18 @@ validate_contract() {
 	{ [ "$cd_version" = "$release_version" ] && [ "$cd_version" = "$template_sync_version" ]; } ||
 		fail 'every devantler-tech/actions caller must carry the same version comment as its pinned commit'
 
-	case "$cd_version" in
-	v*.*.*) ;;
-	*) fail 'each devantler-tech/actions pin must carry a `# vX.Y.Z` version comment naming the release it points at' ;;
-	esac
+	# Anchored and exactly three components. A looser glob such as `v*.*.*` also matches
+	# `v13.1.3.0`, whose fourth component `cut` then silently drops — and a non-numeric
+	# component would reach the arithmetic below, where `[ 1a -lt 13 ]` is an *error* rather
+	# than a false. An error inside an `if` condition evaluates as false, and `set -eu` does
+	# not cover `if` conditions, so anything this gate lets through fails OPEN against the floor.
+	printf '%s\n' "$cd_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
+		fail 'each devantler-tech/actions pin must carry a version comment of the form vX.Y.Z naming the release it points at'
 
 	pinned_major=$(printf '%s' "${cd_version#v}" | cut -d. -f1)
 	pinned_minor=$(printf '%s' "${cd_version#v}" | cut -d. -f2)
 	pinned_patch=$(printf '%s' "${cd_version#v}" | cut -d. -f3)
 
-	# Each component must be pure digits before the arithmetic below. `[ 1a -lt 13 ]` is an
-	# error, not a false, and an error inside an `if` condition evaluates as false — so an
-	# unparseable version would silently satisfy the floor rather than trip it.
-	for pinned_component in "$pinned_major" "$pinned_minor" "$pinned_patch"; do
-		case "$pinned_component" in
-		'' | *[!0-9]*)
-			fail "devantler-tech/actions pins carry an unparseable version comment: $cd_version"
-			;;
-		esac
-	done
 
 	# Ordered comparison, not equality: a forward bump of all three callers must stay green with
 	# no edit to this test, or the tax of updating it is exactly what produces a stale pin.
@@ -293,5 +286,8 @@ run_fleet_mutation 'version comment stripped from every pin' \
 	'd72ecd5e8b680c2066a490a2b761a8913c454575' ''
 run_fleet_mutation 'version comment made unparseable on every pin' \
 	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'vLATEST.x.y'
+run_fleet_mutation 'version comment carrying a fourth component on every pin' \
+	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'v13.1.3.0'
+
 
 printf 'PASS: tenant workflow caller contract (happy path + %s safety mutations)\n' "$mutations_run"
