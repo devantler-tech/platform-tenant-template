@@ -24,9 +24,11 @@ updates:
       # It is a best-effort improvement, NOT a guarantee, and must not be read as one: a security
       # group combines only the dependencies that actually HAVE an advisory, so if one caller is
       # affected and the others are not, Dependabot still opens a partial bump. The guarantee comes
-      # from the coordinated path instead — such a partial PR fails the shared-commit assertion, and
-      # is then adapted into a single bump of all three callers to one reviewed SHA. That converts a
-      # split-fleet bump into a coordinated one; it never blocks the advisory from landing.
+      # from the coordinated path instead. Such a partial PR fails the shared-commit assertion and
+      # is superseded by a SEPARATE pull request that moves all three callers to one reviewed SHA;
+      # the bot's own PR is never touched, because AGENTS.md makes Dependabot-authored PRs
+      # AUTOMATION-OWNED (NO-ACTION) — not reviewed, rebased, adapted, promoted or merged. So the
+      # advisory still lands, through a coordinated PR rather than a split-fleet one.
       devantler-tech-actions-security:
         applies-to: security-updates
         patterns:

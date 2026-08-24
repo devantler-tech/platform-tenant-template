@@ -104,8 +104,9 @@ validate_contract() {
 	# only the dependencies that have an advisory, so it cannot force the unaffected callers to move
 	# and therefore cannot deliver this invariant — asserting it would enforce a guarantee it does
 	# not make. The config still declares one because it helps when advisories coincide, but the
-	# supported path for a partial advisory bump is coordination: it fails the assertion above and is
-	# adapted into one bump of all three callers to a single reviewed SHA.
+	# supported path for a partial advisory bump is a SEPARATE pull request moving all three callers
+	# to one reviewed SHA, which supersedes the partial one. The bot's PR is never adapted: AGENTS.md
+	# makes Dependabot-authored PRs AUTOMATION-OWNED (NO-ACTION).
 	#
 	# `exclude-patterns` is rejected outright rather than pattern-matched. GitHub applies it AFTER
 	# `patterns`, so a group carrying both an inclusion covering these callers and an exclusion
