@@ -20,9 +20,13 @@ updates:
         patterns:
           - "devantler-tech/*"
       # A group applies to EITHER version updates or security updates, never both, and the key
-      # above defaults to `version-updates`. Without this second group a security advisory on one
-      # caller opens an individual PR that fails the same cross-caller assertion — so the pin that
-      # most needs to move is the one that cannot, which is strictly worse than the routine case.
+      # above defaults to `version-updates`, so this second group is what covers advisories at all.
+      # It is a best-effort improvement, NOT a guarantee, and must not be read as one: a security
+      # group combines only the dependencies that actually HAVE an advisory, so if one caller is
+      # affected and the others are not, Dependabot still opens a partial bump. The guarantee comes
+      # from the coordinated path instead — such a partial PR fails the shared-commit assertion, and
+      # is then adapted into a single bump of all three callers to one reviewed SHA. That converts a
+      # split-fleet bump into a coordinated one; it never blocks the advisory from landing.
       devantler-tech-actions-security:
         applies-to: security-updates
         patterns:
