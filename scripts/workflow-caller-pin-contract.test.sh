@@ -49,7 +49,7 @@ validate_pins() {
 	template_sync_version=$(pinned_version_of "$template_sync_file" '.jobs."template-sync".uses')
 	{ [ "$cd_version" = "$release_version" ] && [ "$cd_version" = "$template_sync_version" ]; } ||
 		fail 'every devantler-tech/actions caller must carry the same version comment'
-	printf '%s\n' "$cd_version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
+	printf '%s\n' "$cd_version" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' ||
 		fail 'each devantler-tech/actions pin must carry a version comment of the form vX.Y.Z'
 
 	actions_floor_major=13
@@ -109,6 +109,25 @@ assert_mutation_rejected 'one caller version comment diverged' release \
 	'.jobs.release.uses line_comment = "v13.1.1"'
 assert_mutation_rejected 'version comment became unparseable' template-sync \
 	'.jobs."template-sync".uses line_comment = "vLATEST.x.y"'
+
+cp "$cd_workflow" "$mutation_dir/cd.yaml"
+cp "$release_workflow" "$mutation_dir/release.yaml"
+cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
+for pair in \
+	'cd.yaml|.jobs.publish.uses' \
+	'release.yaml|.jobs.release.uses' \
+	'template-sync.yaml|.jobs."template-sync".uses'; do
+	file=${pair%%|*}
+	path=${pair#*|}
+	yq eval "${path} line_comment = \"v13.01.2\"" \
+		"$mutation_dir/$file" >"$mutation_dir/mutant.yaml"
+	mv "$mutation_dir/mutant.yaml" "$mutation_dir/$file"
+done
+mutations_run=$((mutations_run + 1))
+if (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" \
+	"$mutation_dir/template-sync.yaml") >/dev/null 2>&1; then
+	fail 'mutation passed: shared version comment used a leading-zero component'
+fi
 
 cp "$cd_workflow" "$mutation_dir/cd.yaml"
 cp "$release_workflow" "$mutation_dir/release.yaml"
