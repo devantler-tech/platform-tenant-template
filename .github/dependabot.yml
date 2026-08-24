@@ -8,6 +8,37 @@ updates:
     schedule:
       interval: daily
     open-pull-requests-limit: 10
+    # The workflow-caller contract requires all three devantler-tech/actions callers to ride
+    # ONE commit, so template-sync cannot carry one workflow forward while rolling another
+    # back. Dependabot treats each reusable workflow as its own dependency, so UNGROUPED it
+    # opens one PR per caller (#156, #157 and #158 each touched exactly one file) — and every
+    # one of those lands with the other two still behind, failing that assertion in required
+    # CI. No merge order rescues it: the first caller updated always disagrees with the rest.
+    # Grouping advances all three in a single PR, which is the only shape that can go green.
+    groups:
+      devantler-tech-actions:
+        patterns:
+          - "devantler-tech/*"
+      # A group applies to EITHER version updates or security updates, never both, and the key
+      # above defaults to `version-updates`, so this second group is what covers advisories at all.
+      # It is a best-effort improvement, NOT a guarantee, and must not be read as one: a security
+      # group combines only the dependencies that actually HAVE an advisory, so if one caller is
+      # affected and the others are not, Dependabot still opens a partial bump. The guarantee comes
+      # nowhere automatic. Such a partial PR fails the shared-commit assertion, and NOTHING in this
+      # repository detects that and opens a replacement — there is no coordinating workflow, and the
+      # contract test does not assert one. The escalation is therefore MANUAL and is stated here so
+      # it is not mistaken for an automated guarantee:
+      #   trigger — `Validate Scaffold` fails on a Dependabot PR at the shared-commit assertion;
+      #   actor   — the maintaining engineer (agent or human), never the bot's PR, which AGENTS.md
+      #             makes AUTOMATION-OWNED (NO-ACTION): not reviewed, rebased, adapted or merged;
+      #   action  — open a SEPARATE pull request moving all three callers to one reviewed SHA, which
+      #             supersedes the partial one.
+      # Until that is automated, an advisory lands only when someone performs this. Automating it is
+      # issue #167; do not read the group above as covering it.
+      devantler-tech-actions-security:
+        applies-to: security-updates
+        patterns:
+          - "devantler-tech/*"
     cooldown:
       default-days: 7
       # devantler-tech actions/workflows are our own code — bump now, no cooldown.
