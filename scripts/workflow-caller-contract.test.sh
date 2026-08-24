@@ -10,6 +10,7 @@ template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
 validation_workflow=$repo_root/.github/workflows/validate-scaffold.yaml
 readme=$repo_root/README.md
 template_sync_ignore=$repo_root/.templatesyncignore
+dependabot_config=$repo_root/.github/dependabot.yml
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
@@ -23,6 +24,7 @@ validate_contract() {
 	validation_file=$4
 	readme_file=$5
 	ignore_file=$6
+	dependabot_file=$7
 
 	yq eval -e \
 		'.jobs.publish.uses | test("^devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}$")' \
@@ -82,6 +84,27 @@ validate_contract() {
 
 	{ [ "$cd_version" = "$release_version" ] && [ "$cd_version" = "$template_sync_version" ]; } ||
 		fail 'every devantler-tech/actions caller must carry the same version comment as its pinned commit'
+
+	# The two assertions above require all three callers to move together. Dependabot treats
+	# each reusable workflow as its own dependency, so with no group it opens one pull request
+	# per caller — #156, #157 and #158 each touched exactly one file — and every one of them
+	# arrives with the other two still behind, failing those assertions in required CI. No merge
+	# order rescues it: whichever caller is updated first disagrees with the remaining two. The
+	# group is therefore not a configuration preference, it is what makes the shared-commit
+	# invariant reachable at all, so it is asserted here rather than left in a comment that a
+	# later edit can quietly drop while this test keeps passing.
+	#
+	# `applies-to` is part of the same condition rather than a second assertion beside it: a
+	# group scoped to `security-updates` still leaves routine version bumps arriving one caller
+	# at a time, which is the wedge itself, and the default when the key is absent is
+	# `version-updates`. Asserting the covering group separately would be subsumed by this one
+	# and could never fail on its own.
+	yq eval -e \
+		'[.updates[] | select(."package-ecosystem" == "github-actions") | .groups // {} | .[]
+		  | select([.patterns // [] | .[]] | contains(["devantler-tech/*"]))
+		  | select((."applies-to" // "version-updates") == "version-updates")] | length > 0' \
+		"$dependabot_file" >/dev/null ||
+		fail 'dependabot must carry a github-actions group whose patterns cover devantler-tech/* and which applies to version updates, so all three callers advance in one pull request; without it the shared-commit assertion above blocks every dependency update'
 
 	# Anchored and exactly three components. A looser glob such as `v*.*.*` also matches
 	# `v13.1.3.0`, whose fourth component `cut` then silently drops — and a non-numeric
@@ -146,9 +169,9 @@ validate_contract() {
 }
 
 if [ "${1:-}" = "--validate" ]; then
-	[ "$#" -eq 7 ] ||
-		fail 'usage: workflow-caller-contract.test.sh --validate <cd> <release> <template-sync> <validation> <readme> <ignore>'
-	validate_contract "$2" "$3" "$4" "$5" "$6" "$7"
+	[ "$#" -eq 8 ] ||
+		fail 'usage: workflow-caller-contract.test.sh --validate <cd> <release> <template-sync> <validation> <readme> <ignore> <dependabot>'
+	validate_contract "$2" "$3" "$4" "$5" "$6" "$7" "$8"
 	exit 0
 fi
 
@@ -158,7 +181,8 @@ validate_contract \
 	"$template_sync_workflow" \
 	"$validation_workflow" \
 	"$readme" \
-	"$template_sync_ignore"
+	"$template_sync_ignore" \
+	"$dependabot_config"
 
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
@@ -176,6 +200,7 @@ run_mutation() {
 	cp "$validation_workflow" "$mutation_dir/validation.yaml"
 	cp "$readme" "$mutation_dir/README.md"
 	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
+	cp "$dependabot_config" "$mutation_dir/dependabot.yml"
 
 	case "$file_kind" in
 	cd | release | template-sync | validation)
@@ -190,6 +215,10 @@ run_mutation() {
 		sed "$mutation" "$mutation_dir/templatesyncignore" > "$mutation_dir/mutant.ignore"
 		mv "$mutation_dir/mutant.ignore" "$mutation_dir/templatesyncignore"
 		;;
+	dependabot)
+		yq eval "$mutation" "$mutation_dir/dependabot.yml" > "$mutation_dir/mutant.yaml"
+		mv "$mutation_dir/mutant.yaml" "$mutation_dir/dependabot.yml"
+		;;
 	*) fail "unknown mutation target: $file_kind" ;;
 	esac
 
@@ -199,7 +228,8 @@ run_mutation() {
 		"$mutation_dir/template-sync.yaml" \
 		"$mutation_dir/validation.yaml" \
 		"$mutation_dir/README.md" \
-		"$mutation_dir/templatesyncignore") >/dev/null 2>&1; then
+		"$mutation_dir/templatesyncignore" \
+		"$mutation_dir/dependabot.yml") >/dev/null 2>&1; then
 		fail "mutation passed: $description"
 	fi
 }
@@ -230,6 +260,12 @@ run_mutation 'README local validation marker removed' readme \
 	'/sh scripts\/workflow-caller-contract\.test\.sh/d'
 run_mutation 'actual ownership marker removed' ignore \
 	'/^scripts\/workflow-caller-contract\.test\.sh$/d'
+run_mutation 'dependabot group for the devantler-tech callers removed' dependabot \
+	'del(.updates[] | select(."package-ecosystem" == "github-actions") | .groups)'
+run_mutation 'dependabot group narrowed so it no longer covers the devantler-tech callers' dependabot \
+	'(.updates[] | select(."package-ecosystem" == "github-actions") | .groups."devantler-tech-actions".patterns) = ["actions/*"]'
+run_mutation 'dependabot group scoped to security updates, leaving version bumps ungrouped' dependabot \
+	'(.updates[] | select(."package-ecosystem" == "github-actions") | .groups."devantler-tech-actions"."applies-to") = "security-updates"'
 
 
 # A whole-fleet rollback is the case single-file mutation cannot express: every caller still
@@ -247,6 +283,7 @@ run_fleet_mutation() {
 	cp "$validation_workflow" "$mutation_dir/validation.yaml"
 	cp "$readme" "$mutation_dir/README.md"
 	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
+	cp "$dependabot_config" "$mutation_dir/dependabot.yml"
 
 	for pair in \
 		"cd.yaml|.jobs.publish.uses|publish-app" \
@@ -269,7 +306,8 @@ run_fleet_mutation() {
 		"$mutation_dir/template-sync.yaml" \
 		"$mutation_dir/validation.yaml" \
 		"$mutation_dir/README.md" \
-		"$mutation_dir/templatesyncignore") >/dev/null 2>&1; then
+		"$mutation_dir/templatesyncignore" \
+		"$mutation_dir/dependabot.yml") >/dev/null 2>&1; then
 		fail "mutation passed: $description"
 	fi
 }

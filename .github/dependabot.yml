@@ -8,6 +8,17 @@ updates:
     schedule:
       interval: daily
     open-pull-requests-limit: 10
+    # The workflow-caller contract requires all three devantler-tech/actions callers to ride
+    # ONE commit, so template-sync cannot carry one workflow forward while rolling another
+    # back. Dependabot treats each reusable workflow as its own dependency, so UNGROUPED it
+    # opens one PR per caller (#156, #157 and #158 each touched exactly one file) — and every
+    # one of those lands with the other two still behind, failing that assertion in required
+    # CI. No merge order rescues it: the first caller updated always disagrees with the rest.
+    # Grouping advances all three in a single PR, which is the only shape that can go green.
+    groups:
+      devantler-tech-actions:
+        patterns:
+          - "devantler-tech/*"
     cooldown:
       default-days: 7
       # devantler-tech actions/workflows are our own code — bump now, no cooldown.
