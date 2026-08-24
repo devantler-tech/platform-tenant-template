@@ -24,11 +24,17 @@ updates:
       # It is a best-effort improvement, NOT a guarantee, and must not be read as one: a security
       # group combines only the dependencies that actually HAVE an advisory, so if one caller is
       # affected and the others are not, Dependabot still opens a partial bump. The guarantee comes
-      # from the coordinated path instead. Such a partial PR fails the shared-commit assertion and
-      # is superseded by a SEPARATE pull request that moves all three callers to one reviewed SHA;
-      # the bot's own PR is never touched, because AGENTS.md makes Dependabot-authored PRs
-      # AUTOMATION-OWNED (NO-ACTION) — not reviewed, rebased, adapted, promoted or merged. So the
-      # advisory still lands, through a coordinated PR rather than a split-fleet one.
+      # nowhere automatic. Such a partial PR fails the shared-commit assertion, and NOTHING in this
+      # repository detects that and opens a replacement — there is no coordinating workflow, and the
+      # contract test does not assert one. The escalation is therefore MANUAL and is stated here so
+      # it is not mistaken for an automated guarantee:
+      #   trigger — `Validate Scaffold` fails on a Dependabot PR at the shared-commit assertion;
+      #   actor   — the maintaining engineer (agent or human), never the bot's PR, which AGENTS.md
+      #             makes AUTOMATION-OWNED (NO-ACTION): not reviewed, rebased, adapted or merged;
+      #   action  — open a SEPARATE pull request moving all three callers to one reviewed SHA, which
+      #             supersedes the partial one.
+      # Until that is automated, an advisory lands only when someone performs this. Automating it is
+      # tracked separately; do not read the group above as covering it.
       devantler-tech-actions-security:
         applies-to: security-updates
         patterns:
