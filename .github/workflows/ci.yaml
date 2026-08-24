@@ -12,6 +12,23 @@ permissions: {}
 # the two tenant-owned artifacts that CD publishes. This file is yours to own —
 # add it to `.templatesyncignore` so template-sync never overwrites your stack's CI.
 jobs:
+  workflow-caller-pins:
+    name: Workflow caller pins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 📌 Validate reusable workflow caller pins
+        run: sh scripts/workflow-caller-pin-contract.test.sh
+
   example:
     name: Example
     runs-on: ubuntu-latest
@@ -46,7 +63,7 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [example, delivery-inputs]
+    needs: [workflow-caller-pins, example, delivery-inputs]
     permissions: {}
     if: ${{ always() }}
     steps:
@@ -56,9 +73,10 @@ jobs:
           job-results: >-
             ${{ needs.example.result }}
             ${{ needs.delivery-inputs.result }}
+            ${{ needs.workflow-caller-pins.result }}
       # aggregate-job-checks deliberately tolerates skipped dependencies. A
       # stable required check must fail unless every named tenant job ran.
       - name: Reject incomplete CI jobs
-        if: ${{ needs.example.result != 'success' || needs.delivery-inputs.result != 'success' }}
+        if: ${{ needs.workflow-caller-pins.result != 'success' || needs.example.result != 'success' || needs.delivery-inputs.result != 'success' }}
         run: exit 1
         shell: bash
