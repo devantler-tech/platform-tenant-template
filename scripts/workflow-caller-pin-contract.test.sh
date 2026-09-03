@@ -8,25 +8,33 @@ cd_workflow=$repo_root/.github/workflows/cd.yaml
 release_workflow=$repo_root/.github/workflows/release.yaml
 template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
 
-# The commit a devantler-tech/actions release tag points at, read from the forge and memoised per
-# version so the mutation suite below resolves each tag once. An annotated tag lists a peeled
-# `^{}` entry; that is the commit and wins over the tag object.
-actions_tag_cache=$(mktemp -d)
-trap 'rm -rf "$actions_tag_cache"' EXIT
+# The commit a devantler-tech/actions release tag points at, read from the forge. An annotated
+# tag lists a peeled `^{}` entry as well; that is the commit and wins over the tag object. A tag
+# that does not exist prints nothing and succeeds, while a failed read (network, proxy, auth)
+# fails and leaves its stderr in $actions_tag_error, so the caller can say which of the two it was.
+actions_tag_error=
 actions_tag_commit() {
-	tag_version=$1
-	cache_file=$actions_tag_cache/$tag_version
-	if [ ! -s "$cache_file" ]; then
-		git ls-remote --tags https://github.com/devantler-tech/actions \
-			"refs/tags/$tag_version" "refs/tags/$tag_version^{}" 2>/dev/null |
-			awk 'NF == 2 { if ($2 ~ /\^\{\}$/) peeled = $1; else plain = $1 }
-				END { if (peeled != "") print peeled; else if (plain != "") print plain }' \
-			>"$cache_file" || true
+	if ! actions_tag_listing=$(
+		GIT_TERMINAL_PROMPT=0 git ls-remote --tags https://github.com/devantler-tech/actions \
+			"refs/tags/$1" "refs/tags/$1^{}" 2>&1
+	); then
+		actions_tag_error=$actions_tag_listing
+		return 1
 	fi
-	tag_commit=$(cat "$cache_file")
-	printf '%s\n' "$tag_commit" | grep -Eq '^[0-9a-f]{40}$' || return 1
-	printf '%s\n' "$tag_commit"
+	printf '%s\n' "$actions_tag_listing" |
+		awk 'NF == 2 { if ($2 ~ /\^\{\}$/) peeled = $1; else plain = $1 }
+			END { if (peeled != "") print peeled; else if (plain != "") print plain }' |
+		grep -Ex '[0-9a-f]{40}'
 }
+#!/usr/bin/env sh
+
+set -eu
+
+script_dir=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd)
+repo_root=$(dirname -- "$script_dir")
+cd_workflow=$repo_root/.github/workflows/cd.yaml
+release_workflow=$repo_root/.github/workflows/release.yaml
+template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
@@ -95,7 +103,7 @@ validate_pins() {
 	# resolved — network down, or a version that was never released — fails closed rather than
 	# passing on an unverifiable claim.
 	tag_ref=$(actions_tag_commit "$cd_version") ||
-		fail "could not resolve refs/tags/$cd_version on devantler-tech/actions, so the version comment cannot be verified against the pinned commit (needs network access to github.com, and a released tag)"
+		fail "could not resolve refs/tags/$cd_version on devantler-tech/actions, so the version comment cannot be verified against the pinned commit: ${actions_tag_error:-the tag does not exist (no such release)}"
 	[ "$tag_ref" = "$cd_ref" ] ||
 		fail "devantler-tech/actions callers pin $cd_ref but their version comment names $cd_version, which is $tag_ref; the comment must name the tag of the pinned commit"
 }
@@ -110,7 +118,7 @@ fi
 validate_pins "$cd_workflow" "$release_workflow" "$template_sync_workflow"
 
 mutation_dir=$(mktemp -d)
-trap 'rm -rf "$mutation_dir" "$actions_tag_cache"' EXIT
+trap 'rm -rf "$mutation_dir"' EXIT
 mutations_run=0
 
 assert_mutation_rejected() {
@@ -161,31 +169,8 @@ if (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" \
 	fail 'mutation passed: shared version comment used a leading-zero component'
 fi
 
-cp "$cd_workflow" "$mutation_dir/cd.yaml"
-cp "$release_workflow" "$mutation_dir/release.yaml"
-cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
-for pair in \
-	'cd.yaml|.jobs.publish.uses|publish-app' \
-	'release.yaml|.jobs.release.uses|create-release' \
-	'template-sync.yaml|.jobs."template-sync".uses|template-sync'; do
-	file=${pair%%|*}
-	rest=${pair#*|}
-	path=${rest%%|*}
-	workflow=${rest##*|}
-	yq eval \
-		"${path} = \"devantler-tech/actions/.github/workflows/${workflow}.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32\" |
-		 ${path} line_comment = \"v13.1.1\"" \
-		"$mutation_dir/$file" >"$mutation_dir/mutant.yaml"
-	mv "$mutation_dir/mutant.yaml" "$mutation_dir/$file"
-done
-mutations_run=$((mutations_run + 1))
-if (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" \
-	"$mutation_dir/template-sync.yaml") >/dev/null 2>&1; then
-	fail 'mutation passed: every caller rolled back below the reviewed floor'
-fi
-
-# Every caller re-pinned to the same commit with the same comment, so the shared-commit and
-# shared-comment checks above are satisfied and only the comment-to-commit binding can reject it.
+# Every caller re-pinned to one commit under one comment, so the shared-commit and shared-comment
+# checks are satisfied and only the floor or the comment-to-commit binding can reject it.
 assert_repin_rejected() {
 	description=$1
 	repin_sha=$2
@@ -214,16 +199,23 @@ assert_repin_rejected() {
 	fi
 }
 
+assert_repin_rejected 'every caller rolled back below the reviewed floor' \
+	b089a1b041cb86af22cdc57de58a4d7d258dcc32 v13.1.1
+
 current_ref=$(yq eval -r '.jobs.publish.uses | sub(".*@"; "")' "$cd_workflow")
 # The issue's own reproduction: v13.1.1's commit wearing a `# v13.1.3` annotation clears the floor
 # on the comment alone. Two patch releases below the reviewed floor, and every earlier check green.
 assert_repin_rejected 'a below-floor commit annotated with an above-floor version' \
 	b089a1b041cb86af22cdc57de58a4d7d258dcc32 v13.1.3
 # The honest-mismatch direction: the right commit under a stale comment is still a pin whose
-# version claim is false, and a partially applied bump produces exactly this.
-assert_repin_rejected 'the current commit annotated with a stale version' \
-	"$current_ref" v13.1.1
-# A version that was never released resolves to nothing; an unverifiable claim fails closed.
+# version claim is false, and a partially applied bump produces exactly this. The stale version
+# is ABOVE the floor on purpose — below it, the floor check would reject the mutant first and this
+# case would prove nothing about the binding.
+assert_repin_rejected 'the current commit annotated with a stale above-floor version' \
+	"$current_ref" v13.1.3
+# A version that was never released resolves to nothing; an unverifiable claim fails closed. This
+# fires on the same branch a network outage would, which is why it runs after the happy path above
+# has already proved the forge was reachable in this run.
 assert_repin_rejected 'a version comment naming a tag that does not exist' \
 	"$current_ref" v99.0.0
 

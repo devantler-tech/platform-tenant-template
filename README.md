@@ -142,7 +142,7 @@ only artifacts from this trusted workflow are reconciled.
 kubectl kustomize deploy/                              # manifests build
 sh scripts/rename-placeholders.test.sh                # onboarding contract
 sh scripts/agent-instructions.test.sh                 # agent safety contract
-sh scripts/workflow-caller-pin-contract.test.sh       # portable tenant caller-pin contract
+sh scripts/workflow-caller-pin-contract.test.sh       # portable tenant caller-pin contract (resolves the pinned tag on github.com)
 sh scripts/workflow-caller-contract.test.sh           # template-only caller/scaffold contract
 sh scripts/tenant-ci-contract.test.sh                 # tenant delivery-input CI contract
 sh scripts/pod-security-admission-contract.test.sh    # Pod Security workflow contract
