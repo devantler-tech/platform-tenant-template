@@ -61,7 +61,7 @@ app code.
 | `.github/workflows/template-sync.yaml` | Opens the weekly template-sync PR |
 | `.github/workflows/sync-labels.yaml` | Syncs the repo's issue/PR labels from the canonical label set |
 | `CLAUDE.md` | `@AGENTS.md` shim |
-| `scripts/workflow-caller-pin-contract.test.sh` | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins |
+| `scripts/workflow-caller-pin-contract.test.sh` | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
 | `zizmor.yml` | GitHub Actions pinning policy enforced by the security scan |
 
 **Scaffold-time only (arrives when the repo is created — never re-synced, so a

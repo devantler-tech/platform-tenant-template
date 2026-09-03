@@ -8,6 +8,26 @@ cd_workflow=$repo_root/.github/workflows/cd.yaml
 release_workflow=$repo_root/.github/workflows/release.yaml
 template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
 
+# The commit a devantler-tech/actions release tag points at, read from the forge and memoised per
+# version so the mutation suite below resolves each tag once. An annotated tag lists a peeled
+# `^{}` entry; that is the commit and wins over the tag object.
+actions_tag_cache=$(mktemp -d)
+trap 'rm -rf "$actions_tag_cache"' EXIT
+actions_tag_commit() {
+	tag_version=$1
+	cache_file=$actions_tag_cache/$tag_version
+	if [ ! -s "$cache_file" ]; then
+		git ls-remote --tags https://github.com/devantler-tech/actions \
+			"refs/tags/$tag_version" "refs/tags/$tag_version^{}" 2>/dev/null |
+			awk 'NF == 2 { if ($2 ~ /\^\{\}$/) peeled = $1; else plain = $1 }
+				END { if (peeled != "") print peeled; else if (plain != "") print plain }' \
+			>"$cache_file" || true
+	fi
+	tag_commit=$(cat "$cache_file")
+	printf '%s\n' "$tag_commit" | grep -Eq '^[0-9a-f]{40}$' || return 1
+	printf '%s\n' "$tag_commit"
+}
+
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
 	exit 1
@@ -66,6 +86,18 @@ validate_pins() {
 			[ "$pinned_patch" -lt "$actions_floor_patch" ]; }; then
 		fail "devantler-tech/actions callers are pinned to $cd_version, older than the reviewed floor v13.1.2"
 	fi
+
+	# BIND THE VERSION COMMENT TO THE COMMIT. Everything above reads the comment, which is the one
+	# part of a pin no tooling validates: three callers pinned to v13.1.1's commit while annotated
+	# `# v13.1.3` pass every check so far and sit two patch releases below the floor with a green
+	# contract. The floor is only a control if the version it gates on is the version actually
+	# pinned, so the tag the comment names must resolve to the pinned commit. A tag that cannot be
+	# resolved — network down, or a version that was never released — fails closed rather than
+	# passing on an unverifiable claim.
+	tag_ref=$(actions_tag_commit "$cd_version") ||
+		fail "could not resolve refs/tags/$cd_version on devantler-tech/actions, so the version comment cannot be verified against the pinned commit (needs network access to github.com, and a released tag)"
+	[ "$tag_ref" = "$cd_ref" ] ||
+		fail "devantler-tech/actions callers pin $cd_ref but their version comment names $cd_version, which is $tag_ref; the comment must name the tag of the pinned commit"
 }
 
 if [ "${1:-}" = "--validate" ]; then
@@ -78,7 +110,7 @@ fi
 validate_pins "$cd_workflow" "$release_workflow" "$template_sync_workflow"
 
 mutation_dir=$(mktemp -d)
-trap 'rm -rf "$mutation_dir"' EXIT
+trap 'rm -rf "$mutation_dir" "$actions_tag_cache"' EXIT
 mutations_run=0
 
 assert_mutation_rejected() {
@@ -151,5 +183,48 @@ if (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" \
 	"$mutation_dir/template-sync.yaml") >/dev/null 2>&1; then
 	fail 'mutation passed: every caller rolled back below the reviewed floor'
 fi
+
+# Every caller re-pinned to the same commit with the same comment, so the shared-commit and
+# shared-comment checks above are satisfied and only the comment-to-commit binding can reject it.
+assert_repin_rejected() {
+	description=$1
+	repin_sha=$2
+	repin_comment=$3
+	cp "$cd_workflow" "$mutation_dir/cd.yaml"
+	cp "$release_workflow" "$mutation_dir/release.yaml"
+	cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
+	for pair in \
+		'cd.yaml|.jobs.publish.uses|publish-app' \
+		'release.yaml|.jobs.release.uses|create-release' \
+		'template-sync.yaml|.jobs."template-sync".uses|template-sync'; do
+		file=${pair%%|*}
+		rest=${pair#*|}
+		path=${rest%%|*}
+		workflow=${rest##*|}
+		yq eval \
+			"${path} = \"devantler-tech/actions/.github/workflows/${workflow}.yaml@${repin_sha}\" |
+			 ${path} line_comment = \"${repin_comment}\"" \
+			"$mutation_dir/$file" >"$mutation_dir/mutant.yaml"
+		mv "$mutation_dir/mutant.yaml" "$mutation_dir/$file"
+	done
+	mutations_run=$((mutations_run + 1))
+	if (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" \
+		"$mutation_dir/template-sync.yaml") >/dev/null 2>&1; then
+		fail "mutation passed: $description"
+	fi
+}
+
+current_ref=$(yq eval -r '.jobs.publish.uses | sub(".*@"; "")' "$cd_workflow")
+# The issue's own reproduction: v13.1.1's commit wearing a `# v13.1.3` annotation clears the floor
+# on the comment alone. Two patch releases below the reviewed floor, and every earlier check green.
+assert_repin_rejected 'a below-floor commit annotated with an above-floor version' \
+	b089a1b041cb86af22cdc57de58a4d7d258dcc32 v13.1.3
+# The honest-mismatch direction: the right commit under a stale comment is still a pin whose
+# version claim is false, and a partially applied bump produces exactly this.
+assert_repin_rejected 'the current commit annotated with a stale version' \
+	"$current_ref" v13.1.1
+# A version that was never released resolves to nothing; an unverifiable claim fails closed.
+assert_repin_rejected 'a version comment naming a tag that does not exist' \
+	"$current_ref" v99.0.0
 
 printf 'PASS: portable workflow caller pin contract (happy path + %s safety mutations)\n' "$mutations_run"
