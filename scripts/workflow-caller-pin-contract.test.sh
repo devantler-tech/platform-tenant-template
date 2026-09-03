@@ -11,14 +11,14 @@ template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
 # The commit a devantler-tech/actions release tag points at, read from the forge. An annotated
 # tag lists a peeled `^{}` entry as well; that is the commit and wins over the tag object. A tag
 # that does not exist prints nothing and succeeds, while a failed read (network, proxy, auth)
-# fails and leaves its stderr in $actions_tag_error, so the caller can say which of the two it was.
-actions_tag_error=
+# fails and forwards git's own error to stderr — the caller runs this in a command substitution,
+# so that is the only channel that reaches the person reading the failure.
 actions_tag_commit() {
 	if ! actions_tag_listing=$(
 		GIT_TERMINAL_PROMPT=0 git ls-remote --tags https://github.com/devantler-tech/actions \
 			"refs/tags/$1" "refs/tags/$1^{}" 2>&1
 	); then
-		actions_tag_error=$actions_tag_listing
+		printf 'git ls-remote failed: %s\n' "$actions_tag_listing" >&2
 		return 1
 	fi
 	printf '%s\n' "$actions_tag_listing" |
@@ -103,7 +103,7 @@ validate_pins() {
 	# resolved — network down, or a version that was never released — fails closed rather than
 	# passing on an unverifiable claim.
 	tag_ref=$(actions_tag_commit "$cd_version") ||
-		fail "could not resolve refs/tags/$cd_version on devantler-tech/actions, so the version comment cannot be verified against the pinned commit: ${actions_tag_error:-the tag does not exist (no such release)}"
+		fail "could not resolve refs/tags/$cd_version on devantler-tech/actions, so the version comment cannot be verified against the pinned commit (a git error above means the forge was unreachable; none means no such release exists)"
 	[ "$tag_ref" = "$cd_ref" ] ||
 		fail "devantler-tech/actions callers pin $cd_ref but their version comment names $cd_version, which is $tag_ref; the comment must name the tag of the pinned commit"
 }
@@ -170,11 +170,14 @@ if (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" \
 fi
 
 # Every caller re-pinned to one commit under one comment, so the shared-commit and shared-comment
-# checks are satisfied and only the floor or the comment-to-commit binding can reject it.
+# checks are satisfied and only the floor or the comment-to-commit binding can reject it. The
+# rejection must carry the EXPECTED reason: the resolver reads the forge, so accepting any
+# failure would let a network blip mid-suite pass every mutation without testing anything.
 assert_repin_rejected() {
 	description=$1
 	repin_sha=$2
 	repin_comment=$3
+	expected_reason=$4
 	cp "$cd_workflow" "$mutation_dir/cd.yaml"
 	cp "$release_workflow" "$mutation_dir/release.yaml"
 	cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
@@ -193,30 +196,36 @@ assert_repin_rejected() {
 		mv "$mutation_dir/mutant.yaml" "$mutation_dir/$file"
 	done
 	mutations_run=$((mutations_run + 1))
-	if (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" \
-		"$mutation_dir/template-sync.yaml") >/dev/null 2>&1; then
+	if rejection=$( (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" \
+		"$mutation_dir/template-sync.yaml") 2>&1 >/dev/null); then
 		fail "mutation passed: $description"
 	fi
+	printf '%s\n' "$rejection" | grep -qF -- "$expected_reason" ||
+		fail "mutation rejected for the wrong reason: $description; expected '$expected_reason', got: $rejection"
 }
 
 assert_repin_rejected 'every caller rolled back below the reviewed floor' \
-	b089a1b041cb86af22cdc57de58a4d7d258dcc32 v13.1.1
+	b089a1b041cb86af22cdc57de58a4d7d258dcc32 v13.1.1 \
+	'older than the reviewed floor'
 
 current_ref=$(yq eval -r '.jobs.publish.uses | sub(".*@"; "")' "$cd_workflow")
 # The issue's own reproduction: v13.1.1's commit wearing a `# v13.1.3` annotation clears the floor
 # on the comment alone. Two patch releases below the reviewed floor, and every earlier check green.
 assert_repin_rejected 'a below-floor commit annotated with an above-floor version' \
-	b089a1b041cb86af22cdc57de58a4d7d258dcc32 v13.1.3
+	b089a1b041cb86af22cdc57de58a4d7d258dcc32 v13.1.3 \
+	'the comment must name the tag of the pinned commit'
 # The honest-mismatch direction: the right commit under a stale comment is still a pin whose
 # version claim is false, and a partially applied bump produces exactly this. The stale version
 # is ABOVE the floor on purpose — below it, the floor check would reject the mutant first and this
 # case would prove nothing about the binding.
 assert_repin_rejected 'the current commit annotated with a stale above-floor version' \
-	"$current_ref" v13.1.3
+	"$current_ref" v13.1.3 \
+	'the comment must name the tag of the pinned commit'
 # A version that was never released resolves to nothing; an unverifiable claim fails closed. This
 # fires on the same branch a network outage would, which is why it runs after the happy path above
 # has already proved the forge was reachable in this run.
 assert_repin_rejected 'a version comment naming a tag that does not exist' \
-	"$current_ref" v99.0.0
+	"$current_ref" v99.0.0 \
+	'could not resolve refs/tags/v99.0.0'
 
 printf 'PASS: portable workflow caller pin contract (happy path + %s safety mutations)\n' "$mutations_run"
