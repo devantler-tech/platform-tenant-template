@@ -209,12 +209,13 @@ jobs:
                 .id == "apply-network-boundary"
                 and ((.run | split("restrict-tenant-network-policies") | length) == 9)
                 and ((.run | split("cnp-ingress-sources-must-be-constrained") | length) == 3)
-                and ((.run | split("cnp-egress-destinations-must-be-constrained") | length) == 2)
-                and ((.run | split("--values-file tenant-values.yaml") | length) == 4)
-                and ((.run | split("--userinfo tenant-user-info.yaml") | length) == 3)
+                and ((.run | split("cnp-egress-destinations-must-be-constrained") | length) == 3)
+                and ((.run | split("--values-file tenant-values.yaml") | length) == 5)
+                and ((.run | split("--userinfo tenant-user-info.yaml") | length) == 4)
                 and ((.run | split("platform-user-info.yaml") | length) == 2)
                 and ((.run | split("fromEndpoints") | length) == 2)
-                and ((.run | split("expect_network_denied") | length) == 3)
+                and ((.run | split("toEndpoints") | length) == 2)
+                and ((.run | split("expect_network_denied") | length) == 4)
                 and ((.run | split("expect_network_allowed") | length) == 4)
               ))
             | length == 1
@@ -250,8 +251,12 @@ jobs:
             "${network_run} |= sub(\"restrict-tenant-network-policies\"; \"\")"
           assert_network_mutant_rejected "named rule removed" \
             "${network_run} |= sub(\"cnp-ingress-sources-must-be-constrained\"; \"\")"
-          assert_network_mutant_rejected "unconstrained mutation removed" \
+          assert_network_mutant_rejected "unconstrained ingress mutation removed" \
             "${network_run} |= sub(\"fromEndpoints\"; \"\")"
+          assert_network_mutant_rejected "unconstrained egress mutation removed" \
+            "${network_run} |= sub(\"toEndpoints\"; \"\")"
+          assert_network_mutant_rejected "egress rule name removed" \
+            "${network_run} |= sub(\"cnp-egress-destinations-must-be-constrained\"; \"\")"
           assert_network_mutant_rejected "denial assertion removed" \
             "${network_run} |= sub(\"expect_network_denied\"; \"\")"
           assert_network_mutant_rejected "platform identity control removed" \
@@ -655,10 +660,13 @@ jobs:
             echo "::error::expected exactly one rendered CiliumNetworkPolicy, found ${resource_count}"
             exit 1
           }
-          # The mutant re-introduces the unconstrained selector the scaffold used to
-          # ship; it must be REFUSED, or the valid case proves nothing.
+          # The mutants re-introduce the unconstrained selectors the scaffold used to
+          # ship, one per direction; each must be REFUSED by its own rule, or the
+          # valid case proves nothing.
           yq eval '.spec.ingress += [{"fromEndpoints": [{}]}]' \
             tenant-network-policy.yaml > tenant-network-policy-unconstrained.yaml
+          yq eval '.spec.egress += [{"toEndpoints": [{}]}]' \
+            tenant-network-policy.yaml > tenant-network-policy-unconstrained-egress.yaml
           run_network_case() {
             case_name=$1
             resource=$2
@@ -688,8 +696,8 @@ jobs:
             }
           }
           expect_network_denied() {
-            case_name=$1 resource=$2
-            shift 2
+            case_name=$1 resource=$2 rule=$3
+            shift 3
             if run_network_case "${case_name}" "${resource}" "$@"; then
               cat "${case_name}.out"
               echo "::error::${case_name}: an unconstrained selector was admitted"
@@ -697,7 +705,7 @@ jobs:
             fi
             if ! grep -Fq 'policy restrict-tenant-network-policies' \
                 "${case_name}.out" ||
-              ! grep -Fq 'cnp-ingress-sources-must-be-constrained' \
+              ! grep -Fq "${rule}" \
                 "${case_name}.out" ||
               ! grep -Eq 'fail: [1-9][0-9]*, warn: 0, error: 0' \
                 "${case_name}.out"; then
@@ -712,6 +720,12 @@ jobs:
             --userinfo tenant-user-info.yaml
           expect_network_denied network-mutant \
             tenant-network-policy-unconstrained.yaml \
+            cnp-ingress-sources-must-be-constrained \
+            --values-file tenant-values.yaml \
+            --userinfo tenant-user-info.yaml
+          expect_network_denied network-mutant-egress \
+            tenant-network-policy-unconstrained-egress.yaml \
+            cnp-egress-destinations-must-be-constrained \
             --values-file tenant-values.yaml \
             --userinfo tenant-user-info.yaml
           expect_network_allowed platform-network-mutant no-match \
