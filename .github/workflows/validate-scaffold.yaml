@@ -197,6 +197,70 @@ jobs:
             "${admission_run} |= sub(\"expect_secretstore_denied\"; \"\")"
           assert_secretstore_mutant_rejected "boundary controls removed" \
             "${admission_run} |= (sub(\"unmanaged-values.yaml\"; \"\") | sub(\"platform-user-info.yaml\"; \"\"))"
+          # The tenant NETWORK boundary is proved the same way: the aggregate platform
+          # set applies restrict-tenant-network-policies without a namespace context,
+          # so only this isolated, context-supplied step can see whether the scaffold's
+          # own CiliumNetworkPolicy is admitted — and whether the unconstrained shape
+          # it used to ship is refused (#178). Counts pin the policy, both rules, the
+          # tenant context on every case, the mutation and the denial assertion.
+          network_contract='
+            .jobs.admissibility.steps
+            | map(select(
+                .id == "apply-network-boundary"
+                and ((.run | split("restrict-tenant-network-policies") | length) == 9)
+                and ((.run | split("cnp-ingress-sources-must-be-constrained") | length) == 3)
+                and ((.run | split("cnp-egress-destinations-must-be-constrained") | length) == 3)
+                and ((.run | split("--values-file tenant-values.yaml") | length) == 5)
+                and ((.run | split("--userinfo tenant-user-info.yaml") | length) == 4)
+                and ((.run | split("platform-user-info.yaml") | length) == 2)
+                and ((.run | split("fromEndpoints") | length) == 2)
+                and ((.run | split("toEndpoints") | length) == 2)
+                and ((.run | split("expect_network_denied") | length) == 4)
+                and ((.run | split("expect_network_allowed") | length) == 4)
+              ))
+            | length == 1
+          '
+          assert_network_mutant_rejected() {
+            description=$1
+            mutation=$2
+            mutant=$(mktemp)
+            yq eval "${mutation}" "${workflow}" > "${mutant}"
+            if yq eval -e "${network_contract}" "${mutant}" >/dev/null 2>&1; then
+              echo "::error::network boundary contract accepted mutant: ${description}"
+              rm -f "${mutant}"
+              exit 1
+            fi
+            rm -f "${mutant}"
+          }
+          assert_yaml "the network boundary step must follow the admission step" '
+            (.jobs.admissibility.steps | to_entries
+              | map(select(.value.id == "apply-admission-policies")) | .[0].key) <
+            (.jobs.admissibility.steps | to_entries
+              | map(select(.value.id == "apply-network-boundary")) | .[0].key)
+          '
+          assert_yaml "tenant network admission must stay context- and mutation-proved" \
+            "${network_contract}"
+          network_run='(.jobs.admissibility.steps[] | select(
+            .id == "apply-network-boundary"
+          ).run)'
+          assert_network_mutant_rejected "tenant values flag removed" \
+            "${network_run} |= sub(\"--values-file tenant-values.yaml\"; \"\")"
+          assert_network_mutant_rejected "tenant user info removed" \
+            "${network_run} |= sub(\"--userinfo tenant-user-info.yaml\"; \"\")"
+          assert_network_mutant_rejected "named policy removed" \
+            "${network_run} |= sub(\"restrict-tenant-network-policies\"; \"\")"
+          assert_network_mutant_rejected "named rule removed" \
+            "${network_run} |= sub(\"cnp-ingress-sources-must-be-constrained\"; \"\")"
+          assert_network_mutant_rejected "unconstrained ingress mutation removed" \
+            "${network_run} |= sub(\"fromEndpoints\"; \"\")"
+          assert_network_mutant_rejected "unconstrained egress mutation removed" \
+            "${network_run} |= sub(\"toEndpoints\"; \"\")"
+          assert_network_mutant_rejected "egress rule name removed" \
+            "${network_run} |= sub(\"cnp-egress-destinations-must-be-constrained\"; \"\")"
+          assert_network_mutant_rejected "denial assertion removed" \
+            "${network_run} |= sub(\"expect_network_denied\"; \"\")"
+          assert_network_mutant_rejected "platform identity control removed" \
+            "${network_run} |= sub(\"platform-user-info.yaml\"; \"\")"
       - name: ♻️ Cache CRD schemas
         # Persist the schemas kubeconform downloads from the catalog, keyed on the
         # pinned ref. A cache hit makes the validate step network-free (no fetch at
@@ -554,6 +618,121 @@ jobs:
             tenant-clustersecretstore.yaml \
             --values-file tenant-values.yaml \
             --userinfo platform-user-info.yaml
+      - name: 🌐 Apply the tenant network boundary to the rendered scaffold
+        id: apply-network-boundary
+        # Platform's restrict-tenant-network-policies refuses a tenant
+        # CiliumNetworkPolicy whose fromEndpoints/toEndpoints selector carries no
+        # constraint. The aggregate platform set above applies it WITHOUT a namespace
+        # context, so its namespaceSelector never matches and the rule is skipped —
+        # which is how a scaffold shipping `fromEndpoints: [{}]` read green here while
+        # every new tenant's first reconcile was refused at admission (#178). Isolate
+        # the policy and apply it as the tenant identity in a KSail-managed namespace,
+        # exactly as the SecretStore boundary above, with the unconstrained shape as
+        # the mutant that must be refused.
+        run: |
+          set -euo pipefail
+          yq eval-all '
+            select(
+              .kind == "ClusterPolicy"
+              and .metadata.name == "restrict-tenant-network-policies"
+            )
+          ' platform-policies.yaml > restrict-tenant-network-policies.yaml
+          policy_count=$(grep -c '^kind: ClusterPolicy$' restrict-tenant-network-policies.yaml)
+          [ "${policy_count}" -eq 1 ] || {
+            echo "::error::expected exactly one restrict-tenant-network-policies policy, found ${policy_count}"
+            exit 1
+          }
+          yq eval -e '
+            [.spec.rules[].name
+              | select(. == "cnp-ingress-sources-must-be-constrained"
+                    or . == "cnp-egress-destinations-must-be-constrained")]
+            | length == 2
+          ' restrict-tenant-network-policies.yaml >/dev/null || {
+            echo "::error::restrict-tenant-network-policies is missing its ingress or egress rule"
+            exit 1
+          }
+          yq eval '
+            select(.kind == "CiliumNetworkPolicy")
+            | .metadata.namespace = "tenant-admission-test"
+          ' rendered.yaml > tenant-network-policy.yaml
+          resource_count=$(grep -c '^kind: CiliumNetworkPolicy$' tenant-network-policy.yaml)
+          [ "${resource_count}" -eq 1 ] || {
+            echo "::error::expected exactly one rendered CiliumNetworkPolicy, found ${resource_count}"
+            exit 1
+          }
+          # The mutants re-introduce the unconstrained selectors the scaffold used to
+          # ship, one per direction; each must be REFUSED by its own rule, or the
+          # valid case proves nothing.
+          yq eval '.spec.ingress += [{"fromEndpoints": [{}]}]' \
+            tenant-network-policy.yaml > tenant-network-policy-unconstrained.yaml
+          yq eval '.spec.egress += [{"toEndpoints": [{}]}]' \
+            tenant-network-policy.yaml > tenant-network-policy-unconstrained-egress.yaml
+          run_network_case() {
+            case_name=$1
+            resource=$2
+            shift 2
+            ./kyverno apply restrict-tenant-network-policies.yaml \
+              --resource "${resource}" "$@" \
+              --audit-warn --warn-exit-code 0 \
+              > "${case_name}.out" 2>&1
+          }
+          expect_network_allowed() {
+            case_name=$1 expected=$2 resource=$3
+            shift 3
+            if ! run_network_case "${case_name}" "${resource}" "$@"; then
+              cat "${case_name}.out"
+              echo "::error::${case_name}: expected the network boundary to admit this policy"
+              return 1
+            fi
+            case "${expected}" in
+              pass) result='pass: [1-9][0-9]*, fail: 0, warn: 0, error: 0' ;;
+              no-match) result='pass: 0, fail: 0, warn: 0, error: 0, skip: 0' ;;
+              *) echo "::error::unknown expected result: ${expected}"; return 1 ;;
+            esac
+            grep -Eq "${result}" "${case_name}.out" || {
+              cat "${case_name}.out"
+              echo "::error::${case_name}: Kyverno returned a vacuous or unexpected success"
+              return 1
+            }
+          }
+          expect_network_denied() {
+            case_name=$1 resource=$2 rule=$3
+            shift 3
+            if run_network_case "${case_name}" "${resource}" "$@"; then
+              cat "${case_name}.out"
+              echo "::error::${case_name}: an unconstrained selector was admitted"
+              return 1
+            fi
+            if ! grep -Fq 'policy restrict-tenant-network-policies' \
+                "${case_name}.out" ||
+              ! grep -Fq "${rule}" \
+                "${case_name}.out" ||
+              ! grep -Eq 'fail: [1-9][0-9]*, warn: 0, error: 0' \
+                "${case_name}.out"; then
+              cat "${case_name}.out"
+              echo "::error::${case_name}: failure did not come from the expected policy and rule"
+              return 1
+            fi
+          }
+          expect_network_allowed network-valid pass \
+            tenant-network-policy.yaml \
+            --values-file tenant-values.yaml \
+            --userinfo tenant-user-info.yaml
+          expect_network_denied network-mutant \
+            tenant-network-policy-unconstrained.yaml \
+            cnp-ingress-sources-must-be-constrained \
+            --values-file tenant-values.yaml \
+            --userinfo tenant-user-info.yaml
+          expect_network_denied network-mutant-egress \
+            tenant-network-policy-unconstrained-egress.yaml \
+            cnp-egress-destinations-must-be-constrained \
+            --values-file tenant-values.yaml \
+            --userinfo tenant-user-info.yaml
+          expect_network_allowed platform-network-mutant no-match \
+            tenant-network-policy-unconstrained.yaml \
+            --values-file tenant-values.yaml \
+            --userinfo platform-user-info.yaml
+
       - name: 🔗 Assert the spread-pods lockstep
         id: assert-spread-lockstep
         # The platform's `spread-pods` policy injects its topology spread
