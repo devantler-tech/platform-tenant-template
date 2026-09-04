@@ -14,9 +14,14 @@
 # derives from both kinds, so the standard NetworkPolicy does not re-block
 # traffic this file permits.
 #
-# An empty endpoint selector (`{}`) in a fromEndpoints/toEndpoints rule of a
-# namespaced CiliumNetworkPolicy selects pods in THIS tenant's own namespace, so
-# the intra-namespace rules stay placeholder-free (no namespace to rename).
+# The intra-namespace rules name this tenant's namespace explicitly
+# (`k8s:io.kubernetes.pod.namespace: <tenant>`). An empty selector (`{}`) would
+# select the same pods, but the platform's `restrict-tenant-network-policies`
+# admission boundary refuses any tenant fromEndpoints/toEndpoints selector
+# without a constraint — Cilium unions allow rules, so one unconstrained source
+# would dissolve the namespace's isolation. The value `app` is renamed to your
+# tenant name by scripts/rename-placeholders.sh along with every other `app`
+# value; the tenant namespace IS the tenant name on the platform.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -37,7 +42,8 @@ spec:
     # Intra-namespace: app ⇄ CloudNativePG database (and CNPG replication).
     # Delete this rule if your tenant has no database (cluster.yaml removed).
     - fromEndpoints:
-        - {}
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: app
     # CNPG operator reaches the instance status (8000) and PostgreSQL (5432).
     # Delete this rule if your tenant has no database.
     - fromEndpoints:
@@ -52,7 +58,8 @@ spec:
   egress:
     # Intra-namespace: app → database. Delete this rule if your tenant has no DB.
     - toEndpoints:
-        - {}
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: app
     # Kube API — the CNPG operator manages the Cluster. Delete if no database.
     - toEntities:
         - kube-apiserver
