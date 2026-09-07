@@ -2,11 +2,11 @@
 #
 # The platform's `add-default-deny` Kyverno policy generates a deny-all
 # CiliumNetworkPolicy in EVERY tenant namespace (ingress + egress denied),
-# alongside a companion allow-dns CiliumNetworkPolicy and a plain
-# `networking.k8s.io/v1` NetworkPolicy of the same name. A tenant that ships no
-# allow policy is therefore unreachable from the platform Gateway and cannot
-# reach its own database — so the scaffold ships one day-one. Trim the rules you
-# don't use (e.g. drop the CloudNativePG/intra-namespace rules if you deleted
+# alongside companion allow policies and a plain `networking.k8s.io/v1`
+# NetworkPolicy of the same name. A tenant that ships no allow policy is
+# therefore unreachable from the platform Gateway and cannot reach its own
+# database — so the scaffold ships one day-one. Trim the rules you don't use
+# (e.g. drop the CloudNativePG/intra-namespace rules if you deleted
 # cluster.yaml).
 #
 # Only a CiliumNetworkPolicy is needed to re-open a path, even though two policy
@@ -14,14 +14,24 @@
 # derives from both kinds, so the standard NetworkPolicy does not re-block
 # traffic this file permits.
 #
-# The intra-namespace rules name this tenant's namespace explicitly
-# (`k8s:io.kubernetes.pod.namespace: <tenant>`). An empty selector (`{}`) would
-# select the same pods, but the platform's `restrict-tenant-network-policies`
-# admission boundary refuses any tenant fromEndpoints/toEndpoints selector
-# without a constraint — Cilium unions allow rules, so one unconstrained source
-# would dissolve the namespace's isolation. The value `app` is renamed to your
-# tenant name by scripts/rename-placeholders.sh along with every other `app`
-# value; the tenant namespace IS the tenant name on the platform.
+# Every source and destination below pins a POD LABEL with the `k8s:` prefix.
+# The platform's `restrict-tenant-network-policies` admission boundary refuses a
+# tenant selector that pins no value (`{}`), and equally one whose KEY names a
+# namespace (`k8s:io.kubernetes.pod.namespace`), a reserved identity or a
+# cluster — each of those reaches beyond this namespace, and Cilium unions allow
+# rules, so one such source would dissolve the namespace's isolation. A selector
+# carrying no namespace key is already scoped to this policy's own namespace, so
+# pinning the workload label is both narrower and admissible.
+#
+# The value `app` is renamed to your tenant name by scripts/rename-placeholders.sh
+# along with every other `app` value; the tenant namespace IS the tenant name on
+# the platform. CloudNativePG labels each instance pod `cnpg.io/cluster` with the
+# Cluster's name, which is how the database pods are selected here.
+#
+# Two paths this tenant does NOT declare, because the platform generates them in
+# every namespace and both cross a namespace boundary a tenant policy may not
+# name: DNS egress to kube-dns (`allow-dns`) and the CloudNativePG operator's
+# ingress to instance pods on 8000/5432 (`allow-cnpg-operator`).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -40,38 +50,21 @@ spec:
             - port: "3000"
               protocol: TCP
     # Intra-namespace: app ⇄ CloudNativePG database (and CNPG replication).
-    # Delete this rule if your tenant has no database (cluster.yaml removed).
+    # Delete the database selector if your tenant has no database (cluster.yaml
+    # removed); delete the whole rule if nothing in the namespace talks to a peer.
     - fromEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: app
-    # CNPG operator reaches the instance status (8000) and PostgreSQL (5432).
-    # Delete this rule if your tenant has no database.
-    - fromEndpoints:
+            k8s:app.kubernetes.io/name: app
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: cnpg-system
-      toPorts:
-        - ports:
-            - port: "8000"
-              protocol: TCP
-            - port: "5432"
-              protocol: TCP
+            k8s:cnpg.io/cluster: app-db
   egress:
-    # Intra-namespace: app → database. Delete this rule if your tenant has no DB.
+    # Intra-namespace: app → database (and CNPG replication between instances).
+    # Delete the database selector if your tenant has no database.
     - toEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: app
+            k8s:app.kubernetes.io/name: app
+        - matchLabels:
+            k8s:cnpg.io/cluster: app-db
     # Kube API — the CNPG operator manages the Cluster. Delete if no database.
     - toEntities:
         - kube-apiserver
-    # DNS resolution (kube-dns). The platform also auto-generates an allow-dns
-    # policy; keeping this rule makes the tenant's policy self-contained.
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: kube-system
-            k8s-app: kube-dns
-      toPorts:
-        - ports:
-            - port: "53"
-              protocol: UDP
-            - port: "53"
-              protocol: TCP
