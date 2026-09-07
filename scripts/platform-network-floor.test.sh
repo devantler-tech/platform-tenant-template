@@ -85,14 +85,15 @@ validate_network_floor() {
 			(.spec.applyRules // "All") == "All",
 			([.spec.rules[] | select(.name == "generate-default-deny")] | length) == 1,
 			([.spec.rules[] | select(.name == "generate-allow-dns")] | length) == 1,
+			([.spec.rules[] | select(.name == "generate-allow-cnpg-operator")] | length) == 1,
 			([.spec.rules[] | select(.name == "generate-default-deny-networkpolicy")] | length) == 1,
 			([.spec.rules[] | select([
 				.generate.kind == "CiliumNetworkPolicy",
 				.generate.kind == "NetworkPolicy"
-			] | any)] | length) == 3
+			] | any)] | length) == 4
 		] | all
 	' "$platform_policy" >/dev/null ||
-		fail "Platform generated network floor no longer has all three required rules"
+		fail "Platform generated network floor no longer has all four required rules"
 	# shellcheck disable=SC2016
 	yq eval -e '
 		.spec.rules[] | select(.name == "generate-default-deny") | [
@@ -161,6 +162,43 @@ validate_network_floor() {
 		] | all
 	' "$platform_policy" >/dev/null ||
 		fail "Platform generated DNS allowance no longer covers kube-dns over TCP and UDP"
+	# shellcheck disable=SC2016
+	yq eval -e '
+		.spec.rules[] | select(.name == "generate-allow-cnpg-operator") | [
+			(has("preconditions") | not),
+			(.match | keys | length) == 1,
+			(.match.any | length) == 1,
+			(.match.any[0].resources | keys | length) == 1,
+			(.match.any[0].resources.kinds | [(length == 1), contains(["Namespace"])] | all),
+			(.exclude | keys | length) == 1,
+			(.exclude.any | length) == 1,
+			(.exclude.any[0].resources | keys | length) == 1,
+			(.exclude.any[0].resources.names | [(length == 3), contains(["kube-node-lease"]), contains(["kube-public"]), contains(["kube-system"])] | all),
+			.generate.generateExisting == true,
+			.generate.apiVersion == "cilium.io/v2",
+			.generate.kind == "CiliumNetworkPolicy",
+			.generate.name == "allow-cnpg-operator",
+			.generate.namespace == "{{request.object.metadata.name}}",
+			.generate.synchronize == true,
+			(.generate.data.spec | keys | length) == 2,
+			(.generate.data.spec | has("ingressDeny") | not),
+			(.generate.data.spec | has("egressDeny") | not),
+			(.generate.data.spec.endpointSelector | keys | length) == 1,
+			(.generate.data.spec.endpointSelector.matchExpressions | length) == 1,
+			.generate.data.spec.endpointSelector.matchExpressions[0].key == "k8s:cnpg.io/cluster",
+			.generate.data.spec.endpointSelector.matchExpressions[0].operator == "Exists",
+			(.generate.data.spec.ingress | length) == 1,
+			(.generate.data.spec.ingress[0] | keys | length) == 2,
+			(.generate.data.spec.ingress[0].fromEndpoints | length) == 1,
+			(.generate.data.spec.ingress[0].fromEndpoints[0] | keys | length) == 1,
+			(.generate.data.spec.ingress[0].fromEndpoints[0].matchLabels | keys | length) == 1,
+			.generate.data.spec.ingress[0].fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system",
+			(.generate.data.spec.ingress[0].toPorts | length) == 1,
+			(.generate.data.spec.ingress[0].toPorts[0] | keys | length) == 1,
+			(.generate.data.spec.ingress[0].toPorts[0].ports | [(length == 2), contains([{"port": "8000", "protocol": "TCP"}]), contains([{"port": "5432", "protocol": "TCP"}])] | all)
+		] | all
+	' "$platform_policy" >/dev/null ||
+		fail "Platform generated CloudNativePG operator allowance no longer covers the instance ports"
 	# shellcheck disable=SC2016
 	yq eval -e '
 		.spec.rules[] | select(.name == "generate-default-deny-networkpolicy") | [
@@ -282,8 +320,8 @@ validate_network_floor() {
 			(.spec.endpointSelector | keys | length) == 0,
 			(.spec | has("ingressDeny") | not),
 			(.spec | has("egressDeny") | not),
-			(.spec.ingress | length) == 3,
-			(.spec.egress | length) == 3,
+			(.spec.ingress | length) == 2,
+			(.spec.egress | length) == 2,
 			([.spec.ingress[] | select(.fromEntities | contains(["ingress"]))] | length) == 1,
 			(.spec.ingress[] | select(.fromEntities | contains(["ingress"])) | keys | length) == 2,
 			(.spec.ingress[] | select(.fromEntities | contains(["ingress"])) | .fromEntities | [(length == 1), contains(["ingress"])] | all),
@@ -291,40 +329,27 @@ validate_network_floor() {
 			(.spec.ingress[] | select(.fromEntities | contains(["ingress"])) | .toPorts[0] | keys | length) == 1,
 			(.spec.ingress[] | select(.fromEntities | contains(["ingress"])) | .toPorts[0].ports | [(length == 1), contains([{"port": strenv(app_target_port), "protocol": "TCP"}])] | all),
 			([.spec.ingress[] | select(has("fromEndpoints")) | .fromEndpoints[] | select(keys | length == 0)] | length) == 0,
-			([.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app")] | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app") | .fromEndpoints | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app") | keys | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app") | .fromEndpoints[0] | keys | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app") | .fromEndpoints[0].matchLabels | keys | length) == 1,
-			([.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system")] | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system") | keys | length) == 2,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system") | .fromEndpoints | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system") | .fromEndpoints[0] | keys | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system") | .fromEndpoints[0].matchLabels | keys | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system") | .toPorts | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system") | .toPorts[0] | keys | length) == 1,
-			(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system") | .toPorts[0].ports | [(length == 2), contains([{"port": "5432", "protocol": "TCP"}]), contains([{"port": "8000", "protocol": "TCP"}])] | all),
 			([.spec.egress[] | select(has("toEndpoints")) | .toEndpoints[] | select(keys | length == 0)] | length) == 0,
-			([.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app")] | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app") | .toEndpoints | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app") | keys | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app") | .toEndpoints[0] | keys | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app") | .toEndpoints[0].matchLabels | keys | length) == 1,
+			([.spec.ingress[] | select(has("fromEndpoints")) | .fromEndpoints[] | select(.matchLabels | has("k8s:io.kubernetes.pod.namespace"))] | length) == 0,
+			([.spec.egress[] | select(has("toEndpoints")) | .toEndpoints[] | select(.matchLabels | has("k8s:io.kubernetes.pod.namespace"))] | length) == 0,
+			([.spec.ingress[] | select(has("fromEndpoints"))] | length) == 1,
+			(.spec.ingress[] | select(has("fromEndpoints")) | keys | length) == 1,
+			(.spec.ingress[] | select(has("fromEndpoints")) | .fromEndpoints | length) == 2,
+			([.spec.ingress[] | select(has("fromEndpoints")) | .fromEndpoints[] | select(.matchLabels."k8s:app.kubernetes.io/name" == "app")] | length) == 1,
+			([.spec.ingress[] | select(has("fromEndpoints")) | .fromEndpoints[] | select(.matchLabels."k8s:cnpg.io/cluster" == "app-db")] | length) == 1,
+			([.spec.ingress[] | select(has("fromEndpoints")) | .fromEndpoints[] | select((.matchLabels | keys | length) == 1)] | length) == 2,
+			([.spec.egress[] | select(has("toEndpoints"))] | length) == 1,
+			(.spec.egress[] | select(has("toEndpoints")) | keys | length) == 1,
+			(.spec.egress[] | select(has("toEndpoints")) | .toEndpoints | length) == 2,
+			([.spec.egress[] | select(has("toEndpoints")) | .toEndpoints[] | select(.matchLabels."k8s:app.kubernetes.io/name" == "app")] | length) == 1,
+			([.spec.egress[] | select(has("toEndpoints")) | .toEndpoints[] | select(.matchLabels."k8s:cnpg.io/cluster" == "app-db")] | length) == 1,
+			([.spec.egress[] | select(has("toEndpoints")) | .toEndpoints[] | select((.matchLabels | keys | length) == 1)] | length) == 2,
 			([.spec.egress[] | select(.toEntities | contains(["kube-apiserver"]))] | length) == 1,
 			(.spec.egress[] | select(.toEntities | contains(["kube-apiserver"])) | keys | length) == 1,
-			(.spec.egress[] | select(.toEntities | contains(["kube-apiserver"])) | .toEntities | [(length == 1), contains(["kube-apiserver"])] | all),
-			([.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns")] | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns") | keys | length) == 2,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns") | .toEndpoints | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns") | .toEndpoints[0] | keys | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns") | .toEndpoints[0].matchLabels | keys | length) == 2,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns") | .toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "kube-system"),
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns") | .toPorts | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns") | .toPorts[0] | keys | length) == 1,
-			(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns") | .toPorts[0].ports | [(length == 2), contains([{"port": "53", "protocol": "TCP"}]), contains([{"port": "53", "protocol": "UDP"}])] | all)
+			(.spec.egress[] | select(.toEntities | contains(["kube-apiserver"])) | .toEntities | [(length == 1), contains(["kube-apiserver"])] | all)
 		] | all
 	' "$scaffold_policy" >/dev/null ||
-		fail "rendered tenant scaffold no longer re-opens Gateway, namespace, CNPG, Kubernetes API, and DNS traffic"
+		fail "rendered tenant scaffold no longer re-opens Gateway, intra-namespace and Kubernetes API traffic with label-pinned selectors"
 }
 
 extract_rendered_resource() {
@@ -378,6 +403,14 @@ validate_platform_network_inventory() {
 				apiVersion: "cilium.io/v2",
 				kind: "CiliumNetworkPolicy",
 				name: "allow-dns",
+				namespace: "{{request.object.metadata.name}}"
+			},
+			{
+				policy: "add-default-deny",
+				rule: "generate-allow-cnpg-operator",
+				apiVersion: "cilium.io/v2",
+				kind: "CiliumNetworkPolicy",
+				name: "allow-cnpg-operator",
 				namespace: "{{request.object.metadata.name}}"
 			},
 			{
@@ -674,41 +707,42 @@ run_scaffold_mutation "Gateway ingress gains an additional port block" \
 	'(.spec.ingress[] | select(.fromEntities | contains(["ingress"])).toPorts) += [{"ports": [{"port": "8080", "protocol": "TCP"}]}]'
 run_scaffold_mutation "unexpected world ingress allowance added" \
 	'.spec.ingress += [{"fromEntities": ["world"]}]'
-run_scaffold_mutation "same-namespace ingress allowance removed" \
-	'del(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app"))'
-run_scaffold_mutation "same-namespace ingress adds another selector" \
-	'(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app").fromEndpoints) += [{"matchLabels": {"k8s:io.kubernetes.pod.namespace": "other"}}]'
-run_scaffold_mutation "same-namespace ingress restricted to one port" \
-	'(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app").toPorts) = [{"ports": [{"port": "3000", "protocol": "TCP"}]}]'
+run_scaffold_mutation "intra-namespace ingress allowance removed" \
+	'del(.spec.ingress[] | select(has("fromEndpoints")))'
+run_scaffold_mutation "intra-namespace ingress adds another selector" \
+	'(.spec.ingress[] | select(has("fromEndpoints")).fromEndpoints) += [{"matchLabels": {"k8s:app.kubernetes.io/name": "other"}}]'
+run_scaffold_mutation "intra-namespace ingress gains a port block" \
+	'(.spec.ingress[] | select(has("fromEndpoints")).toPorts) = [{"ports": [{"port": "3000", "protocol": "TCP"}]}]'
 # The empty selector selects the same pods but is refused by Platform's
-# restrict-tenant-network-policies admission boundary (#178); the scaffold must
-# never ship it again.
-run_scaffold_mutation "same-namespace ingress widened to an unconstrained selector" \
-	'(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app").fromEndpoints[0]) = {}'
-run_scaffold_mutation "same-namespace ingress selector renamed to another namespace" \
-	'(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app").fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace") = "other"'
+# restrict-tenant-network-policies admission boundary (#178). A selector KEY
+# naming the namespace is refused for the same reason (#3655), so both
+# spellings are pinned here; the scaffold must never ship either again.
+run_scaffold_mutation "intra-namespace ingress widened to an unconstrained selector" \
+	'(.spec.ingress[] | select(has("fromEndpoints")).fromEndpoints[0]) = {}'
+run_scaffold_mutation "intra-namespace ingress selector reverted to a namespace key" \
+	'(.spec.ingress[] | select(has("fromEndpoints")).fromEndpoints[0].matchLabels) = {"k8s:io.kubernetes.pod.namespace": "app"}'
+run_scaffold_mutation "intra-namespace ingress drops the database selector" \
+	'del(.spec.ingress[] | select(has("fromEndpoints")).fromEndpoints[] | select(.matchLabels."k8s:cnpg.io/cluster" == "app-db"))'
 run_scaffold_mutation "Kubernetes API egress allowance removed" \
 	'(.spec.egress[] | select(.toEntities | contains(["kube-apiserver"])).toEntities) = ["host"]'
 run_scaffold_mutation "Kubernetes API egress allowance broadened to world" \
 	'(.spec.egress[] | select(.toEntities | contains(["kube-apiserver"])).toEntities) += ["world"]'
 run_scaffold_mutation "unexpected world egress allowance added" \
 	'.spec.egress += [{"toEntities": ["world"]}]'
-run_scaffold_mutation "same-namespace egress adds another selector" \
-	'(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app").toEndpoints) += [{"matchLabels": {"k8s:io.kubernetes.pod.namespace": "other"}}]'
-run_scaffold_mutation "same-namespace egress widened to an unconstrained selector" \
-	'(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app").toEndpoints[0]) = {}'
-run_scaffold_mutation "same-namespace egress allowance removed" \
-	'del(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "app"))'
-run_scaffold_mutation "tenant DNS UDP allowance removed" \
-	'del(.spec.egress[] | select(.toEndpoints[0].matchLabels."k8s-app" == "kube-dns").toPorts[0].ports[] | select(.protocol == "UDP"))'
+run_scaffold_mutation "intra-namespace egress adds another selector" \
+	'(.spec.egress[] | select(has("toEndpoints")).toEndpoints) += [{"matchLabels": {"k8s:app.kubernetes.io/name": "other"}}]'
+run_scaffold_mutation "intra-namespace egress widened to an unconstrained selector" \
+	'(.spec.egress[] | select(has("toEndpoints")).toEndpoints[0]) = {}'
+run_scaffold_mutation "intra-namespace egress selector reverted to a namespace key" \
+	'(.spec.egress[] | select(has("toEndpoints")).toEndpoints[0].matchLabels) = {"k8s:io.kubernetes.pod.namespace": "app"}'
+run_scaffold_mutation "intra-namespace egress allowance removed" \
+	'del(.spec.egress[] | select(has("toEndpoints")))'
+run_scaffold_mutation "intra-namespace egress drops the database selector" \
+	'del(.spec.egress[] | select(has("toEndpoints")).toEndpoints[] | select(.matchLabels."k8s:cnpg.io/cluster" == "app-db"))'
 run_scaffold_mutation "tenant Gateway deny override introduced" \
 	'.spec.ingressDeny = [{"fromEntities": ["ingress"]}]'
 run_scaffold_mutation "network policy moved outside the workload namespace" \
 	'.metadata.namespace = "other-namespace"'
-run_scaffold_mutation "CNPG selector restricted away from operator pods" \
-	'(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system").fromEndpoints[0].matchLabels."app.kubernetes.io/name") = "nonexistent"'
-run_scaffold_mutation "CNPG ingress gains an additional port block" \
-	'(.spec.ingress[] | select(.fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system").toPorts) += [{"ports": [{"port": "8080", "protocol": "TCP"}]}]'
 run_service_mutation "Service target port diverged from workload and network policy" \
 	'(.spec.ports[] | select(.name == "http").targetPort) = 3001'
 run_service_mutation "Service selector diverged from workload labels" \
