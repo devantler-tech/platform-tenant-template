@@ -26,15 +26,6 @@ actions_tag_commit() {
 			END { if (peeled != "") print peeled; else if (plain != "") print plain }' |
 		grep -Ex '[0-9a-f]{40}'
 }
-#!/usr/bin/env sh
-
-set -eu
-
-script_dir=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd)
-repo_root=$(dirname -- "$script_dir")
-cd_workflow=$repo_root/.github/workflows/cd.yaml
-release_workflow=$repo_root/.github/workflows/release.yaml
-template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
