@@ -13,33 +13,13 @@ expected_publish_workflow='^devantler-tech/actions/\.github/workflows/publish-ap
 # shellcheck disable=SC2016
 expected_publish_app_name='${{ github.event.repository.name }}'
 expected_oidc_issuer='^https://token\.actions\.githubusercontent\.com$'
-# Platform's declared trust rule, and pinning it here is the security property: it
-# accepts only the shared actions workflow signed from a 40-hex commit SHA — no tag,
-# no branch, no wildcard — so every other ref form fails to verify.
-#
-# Platform carries the rule in TWO shapes, and they are asserted separately rather
-# than as one permissive union, so neither site can drift into the other's form:
-#
-#   * GENERIC (the tenant ResourceGraphDefinition every tenant inherits): the ref is
-#     the character class below, accepting any commit SHA of that workflow. Compared
-#     VERBATIM — platform's generator leaves generic multi-consumer subjects alone,
-#     so there is nothing here that legitimately moves.
+# Platform's trust rule for tenant release streams, and pinning it here is the
+# security property: it accepts only the shared actions workflow signed from a
+# 40-hex commit SHA — no tag, no branch, no wildcard — so every other ref form fails
+# to verify. Platform declares this rule verbatim on both tenant sites — the tenant
+# ResourceGraphDefinition every new tenant inherits, and each manually declared
+# tenant's own OCIRepository — so both sites are compared verbatim.
 expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
-#   * PINNED (a deployed consumer's own OCIRepository): the ref is generated from
-#     platform's approved revision set, so its text legitimately changes whenever
-#     that set is regenerated. The producer identity — org, repository, workflow
-#     path — is still matched exactly; only the ref half is matched by shape, and
-#     that shape is platform's own generator contract verbatim
-#     (scripts/write-publish-workflow-matchers.sh, FIXED_REF_RE): one bare SHA, one
-#     parenthesised SHA, or an alternation of exactly two. Each is a 40-hex commit
-#     SHA, so a tag, a branch, `.*`, a short or upper-case SHA, a third alternative,
-#     a different workflow or org, or a dropped anchor is still rejected.
-#
-#     Freezing one revision here instead would turn every approved-revision
-#     regeneration on platform into a red scheduled run in this repository — a
-#     tripwire that fires on the routine case, and so stops being read.
-expected_oidc_subject_pinned='^\^https://github\\\.com/devantler-tech/actions/\\\.github/workflows/publish-app\\\.yaml@([0-9a-f]{40}|\([0-9a-f]{40}\)|\([0-9a-f]{40}\|[0-9a-f]{40}\))\$$'
-export expected_oidc_subject_pinned
 export expected_publish_workflow expected_publish_app_name
 export expected_oidc_issuer expected_oidc_subject
 
@@ -312,8 +292,9 @@ validate_platform() {
 		.kind == "OCIRepository"
 		and .metadata.name == strenv(tenant_name)
 		and .metadata.namespace == strenv(tenant_name)
-		and (.spec.ref | has("semver") | not)
-		and (.spec.ref.tag | test("^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"))
+		and .spec.ref.semver == ">=1.0.0"
+		and (.spec.ref | has("digest") | not)
+		and (.spec.ref | has("tag") | not)
 		and .spec.url == strenv(expected_manual_oci_url)
 		and .spec.secretRef.name == "ghcr-auth"
 		and ((.spec.suspend // false) == false)
@@ -321,7 +302,7 @@ validate_platform() {
 		and (.spec.verify | has("secretRef") | not)
 		and (.spec.verify.matchOIDCIdentity | length) == 1
 		and .spec.verify.matchOIDCIdentity[0].issuer == strenv(expected_oidc_issuer)
-		and (.spec.verify.matchOIDCIdentity[0].subject | test(strenv(expected_oidc_subject_pinned)))
+		and .spec.verify.matchOIDCIdentity[0].subject == strenv(expected_oidc_subject)
 	' "$manual_oci_repository" >/dev/null || fail "manual Platform tenant OCI source no longer requires the signed private artifact"
 
 	# shellcheck disable=SC2016
@@ -614,39 +595,33 @@ run_mutation "manual OCI subject widened" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github.com/devantler-tech/.*$"'
 run_mutation "manual OCI key verification override added" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.secretRef.name) = "alternate-cosign-key"'
-# The deployed consumer's subject is matched by SHAPE rather than verbatim, because
-# platform regenerates its ref half from the approved revision set. These pin the
-# boundaries of that shape, so the tolerance cannot quietly widen into a ref form
-# that is not a commit SHA. Each is a ref that cosign would happily verify against a
-# mutable target, which is precisely what the rule exists to forbid.
+# The subject is compared verbatim, so every widening of its ref half or producer
+# identity must fail. Each is a ref form cosign would happily verify against a
+# mutable target or a foreign producer, which is precisely what the rule forbids.
 run_mutation "manual OCI subject ref floated to a tag" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@v1\.2\.3$"'
 run_mutation "manual OCI subject ref floated to a branch" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@main$"'
-run_mutation "manual OCI subject ref shortened below 40 hex" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@625b7c0cd5ad4a04f9eb7494298c6d0fa44521e$"'
-run_mutation "manual OCI subject grows a third approved revision" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(625b7c0cd5ad4a04f9eb7494298c6d0fa44521ef|4f4e07a3ebf3e1161756a292966e36c91a65ee04|0000000000000000000000000000000000000000)$"'
+run_mutation "manual OCI subject ref accepts short SHAs" "$manual_path/oci-repository.yaml" \
+	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{7,40}$"'
+run_mutation "manual OCI subject end anchor dropped" "$manual_path/oci-repository.yaml" \
+	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}"'
 run_mutation "manual OCI subject producer org changed" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/evil-tech/actions/\.github/workflows/publish-app\.yaml@625b7c0cd5ad4a04f9eb7494298c6d0fa44521ef$"'
+	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/evil-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$"'
 run_mutation "manual OCI source suspended" "$manual_path/oci-repository.yaml" \
 	'.spec.suspend = true'
-# The pinned-tag predicate is the only thing standing between this tenant and a
-# mutable artifact reference, so it needs mutants of its own. Each version
-# component is anchored separately, so one leading-zero mutant cannot pin the
-# predicate: a partial revert that tightened only the major component would
-# still reject "01.2.3" while accepting "1.02.3". All three positions therefore
-# get their own mutant.
-run_mutation "manual OCI pinned tag floated" "$manual_path/oci-repository.yaml" \
-	'(.spec.ref.tag) = "latest"'
-run_mutation "manual OCI semver range restored" "$manual_path/oci-repository.yaml" \
-	'(.spec.ref.semver) = ">=1.0.0"'
-run_mutation "manual OCI tag major component leading zero" "$manual_path/oci-repository.yaml" \
-	'(.spec.ref.tag) = "01.2.3"'
-run_mutation "manual OCI tag patch component leading zero" "$manual_path/oci-repository.yaml" \
-	'(.spec.ref.tag) = "1.2.03"'
-run_mutation "manual OCI tag minor component leading zero" "$manual_path/oci-repository.yaml" \
-	'(.spec.ref.tag) = "1.02.3"'
+# The release-stream selector keeps the tenant on its signed stable releases. Flux
+# resolves a digest ahead of a semver range, so a digest silently freezes the
+# stream; a floating tag or a widened range admits artifacts no stable release
+# produced.
+run_mutation "manual OCI stream widened to pre-releases" "$manual_path/oci-repository.yaml" \
+	'(.spec.ref.semver) = ">=1.0.0-0"'
+run_mutation "manual OCI stream widened to every version" "$manual_path/oci-repository.yaml" \
+	'(.spec.ref.semver) = "*"'
+run_mutation "manual OCI stream replaced by a floating tag" "$manual_path/oci-repository.yaml" \
+	'.spec.ref = {"tag": "latest"}'
+run_mutation "manual OCI stream overridden by a digest" "$manual_path/oci-repository.yaml" \
+	'(.spec.ref.digest) = "sha256:0000000000000000000000000000000000000000000000000000000000000000"'
 run_mutation "manual Flux artifact source disconnected" "$manual_path/flux-kustomization.yaml" \
 	'del(.spec.sourceRef)'
 run_mutation "manual Flux artifact source crosses namespace" "$manual_path/flux-kustomization.yaml" \
