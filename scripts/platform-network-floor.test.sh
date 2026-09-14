@@ -191,8 +191,10 @@ validate_network_floor() {
 			(.generate.data.spec.ingress[0] | keys | length) == 2,
 			(.generate.data.spec.ingress[0].fromEndpoints | length) == 1,
 			(.generate.data.spec.ingress[0].fromEndpoints[0] | keys | length) == 1,
-			(.generate.data.spec.ingress[0].fromEndpoints[0].matchLabels | keys | length) == 1,
+			(.generate.data.spec.ingress[0].fromEndpoints[0].matchLabels | keys | length) == 3,
 			.generate.data.spec.ingress[0].fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "cnpg-system",
+			.generate.data.spec.ingress[0].fromEndpoints[0].matchLabels."k8s:app.kubernetes.io/name" == "cloudnative-pg",
+			.generate.data.spec.ingress[0].fromEndpoints[0].matchLabels."k8s:app.kubernetes.io/instance" == "cloudnative-pg",
 			(.generate.data.spec.ingress[0].toPorts | length) == 1,
 			(.generate.data.spec.ingress[0].toPorts[0] | keys | length) == 1,
 			(.generate.data.spec.ingress[0].toPorts[0].ports | [(length == 2), contains([{"port": "8000", "protocol": "TCP"}]), contains([{"port": "5432", "protocol": "TCP"}])] | all)
@@ -699,6 +701,12 @@ run_platform_mutation "generated DNS deny override introduced" \
 	'(.spec.rules[] | select(.name == "generate-allow-dns").generate.data.spec.egressDeny) = [{"toEntities": ["all"]}]'
 run_platform_mutation "generated DNS allowance broadened to world egress" \
 	'(.spec.rules[] | select(.name == "generate-allow-dns").generate.data.spec.egress) += [{"toEntities": ["world"]}]'
+# The operator namespace also hosts other CloudNativePG components, so the database
+# path must stay pinned to the operator's own pods, not the whole namespace.
+run_platform_mutation "generated CloudNativePG allowance widened to the operator namespace" \
+	'del(.spec.rules[] | select(.name == "generate-allow-cnpg-operator").generate.data.spec.ingress[0].fromEndpoints[0].matchLabels."k8s:app.kubernetes.io/name", .spec.rules[] | select(.name == "generate-allow-cnpg-operator").generate.data.spec.ingress[0].fromEndpoints[0].matchLabels."k8s:app.kubernetes.io/instance")'
+run_platform_mutation "generated CloudNativePG allowance trusts another component" \
+	'(.spec.rules[] | select(.name == "generate-allow-cnpg-operator").generate.data.spec.ingress[0].fromEndpoints[0].matchLabels."k8s:app.kubernetes.io/instance") = "barman-cloud"'
 run_platform_mutation "standard default-deny kind changed" \
 	'(.spec.rules[] | select(.name == "generate-default-deny-networkpolicy").generate.kind) = "CiliumNetworkPolicy"'
 run_scaffold_mutation "Gateway ingress allowance removed" \
@@ -780,4 +788,4 @@ run_http_route_mutation "HTTPRoute backend identity and port split across differ
 run_rendered_scaffold_mutation "Kustomize patch removed rendered Gateway allowance" \
 	'.patches = [{"target": {"kind": "CiliumNetworkPolicy", "name": "app"}, "patch": "- op: remove\n  path: /spec/ingress/0"}]'
 
-echo "PASS: Platform network floor (generated policies + tenant allows + live route domains + 58 safety mutations)"
+echo "PASS: Platform network floor (generated policies + tenant allows + live route domains + 60 safety mutations)"
