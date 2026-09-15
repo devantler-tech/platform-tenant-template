@@ -3,6 +3,12 @@ name: 🧱 Validate Scaffold
 on:
   pull_request:
     branches: [main]
+  # A pull request validates its merge with main as main was when the run
+  # started; later merges never re-run it. So every merge re-validates main: it
+  # confirms a fix landed and catches two PRs that each passed against an older
+  # main but break together.
+  push:
+    branches: [main]
   # The admissibility job consumes live policy mains, so it must keep checking
   # even while this template has no unrelated pull-request activity. GitHub runs
   # scheduled workflows from the latest default-branch commit.
@@ -122,6 +128,8 @@ jobs:
 
           assert_yaml "pull requests to main must stay covered" \
             '.["on"].pull_request.branches | (length == 1 and .[0] == "main")'
+          assert_yaml "every merge to main must re-validate main" \
+            '.["on"].push.branches | (length == 1 and .[0] == "main")'
           assert_yaml "the live-policy drift gate must run weekly" \
             '.["on"].schedule | (length == 1 and .[0].cron == "17 6 * * 1")'
           assert_yaml "manual dispatch must stay covered" \
