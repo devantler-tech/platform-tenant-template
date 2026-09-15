@@ -3,9 +3,10 @@ name: 🧱 Validate Scaffold
 on:
   pull_request:
     branches: [main]
-  # A pull request is validated against its own head, not the merged result, so
-  # every merge re-validates main: it confirms a fix landed and catches two PRs
-  # that each passed alone but break together.
+  # A pull request validates its merge with main as main was when the run
+  # started; later merges never re-run it. So every merge re-validates main: it
+  # confirms a fix landed and catches two PRs that each passed against an older
+  # main but break together.
   push:
     branches: [main]
   # The admissibility job consumes live policy mains, so it must keep checking
