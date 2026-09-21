@@ -12,7 +12,7 @@
 # every tenant by template-sync — change those upstream in
 # devantler-tech/platform-tenant-template, never by editing them in a tenant.
 # Template-owned files: .github/workflows/{cd,release,template-sync,sync-labels}.yaml,
-# scripts/workflow-caller-pin-contract.test.sh, CLAUDE.md, zizmor.yml.
+# scripts/workflow-caller-pin-contract.test.sh, scripts/publish-pin-approved.sh, CLAUDE.md, zizmor.yml.
 
 # --- Identity & docs (tenant-specific) ---
 AGENTS.md
@@ -55,6 +55,7 @@ scripts/platform-network-floor.test.sh
 scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh
 scripts/platform-vpa-floor-contract.test.sh
+scripts/publish-pin-approved.test.sh
 .github/workflows/validate-scaffold.yaml
 
 # --- This ignore-list itself (the tenant curates its own ownership) ---

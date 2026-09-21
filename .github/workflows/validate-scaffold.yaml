@@ -357,6 +357,10 @@ jobs:
         run: sh scripts/platform-network-floor-contract.test.sh
       - name: 📈 Validate Platform VPA-floor contract
         run: sh scripts/platform-vpa-floor-contract.test.sh
+      - name: 📦 Validate the publish-app pin approval check
+        # The script is template-owned and synced to every tenant; each tenant wires it into
+        # its own required CI separately. Its tests stay here.
+        run: sh scripts/publish-pin-approved.test.sh
 
   # Platform admissibility gate (#71, epic #6 theme 4): the scaffold's promise is
   # "admissible on day one", so apply the platform's LIVE Kyverno admission policy
