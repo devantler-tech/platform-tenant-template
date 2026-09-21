@@ -75,10 +75,19 @@ expect 'duplicate rows fail closed' 1 'more than one publish-app row' "$work/dup
 
 printf 'consumer%sworkflow%sapplied_signer_sha%smain_pin_sha\n%s\n' "$tab" "$tab" "$tab" \
 	"example-tenant${tab}publish-app${tab}${candidate}${tab}${main_pin}" >"$work/old.tsv"
-expect 'a set without the release candidate column fails closed' 1 'lacks a consumer' "$work/old.tsv" "$candidate"
+expect 'a set without the release candidate column fails closed' 1 'exactly once' "$work/old.tsv" "$candidate"
 
 set_file empty.tsv "$(row example-tenant "$applied" "$main_pin" -)"
 expect 'an empty candidate column never matches' 1 'is not in' "$work/empty.tsv" "$candidate"
+
+# A malformed revision alongside the approved one must not let the row pass.
+set_file bad-field.tsv "$(row example-tenant "$applied" "$main_pin" "$candidate")"
+sed "s/$main_pin/not-a-sha/" "$work/bad-field.tsv" >"$work/bad-field2.tsv"
+expect 'a malformed revision field fails closed' 1 'neither - nor a 40-character commit SHA' "$work/bad-field2.tsv" "$candidate"
+
+printf 'consumer%sworkflow%sapplied_signer_sha%smain_pin_sha%srelease_candidate_sha%smain_pin_sha\n%s\n' "$tab" "$tab" "$tab" "$tab" "$tab" \
+	"example-tenant${tab}publish-app${tab}${applied}${tab}${main_pin}${tab}${candidate}${tab}${unapproved}" >"$work/dup-header.tsv"
+expect 'a duplicated required column fails closed' 1 'exactly once' "$work/dup-header.tsv" "$unapproved"
 
 cd_file base.yaml "$main_pin"
 printf 'jobs:\n  publish:\n    uses: devantler-tech/actions/.github/workflows/publish-app.yaml@v13\n' >"$work/tag.yaml"
@@ -89,6 +98,17 @@ if [ "$status" -eq 1 ] && printf '%s\n' "$output" | grep -Fq 'to a commit SHA'; 
 	pass=$((pass + 1))
 else
 	printf 'FAIL: a tag pin fails closed (exit %s)\n%s\n' "$status" "$output" >&2
+	failures=$((failures + 1))
+fi
+
+printf 'jobs:\n  publish:\n    uses: %s\n' "$candidate" >"$work/bare.yaml"
+status=0
+output=$(PUBLISH_PIN_CONSUMER=example-tenant PUBLISH_PIN_APPROVED_SET=$work/ok.tsv \
+	sh "$subject" "$work/base.yaml" "$work/bare.yaml" 2>&1) || status=$?
+if [ "$status" -eq 1 ] && printf '%s\n' "$output" | grep -Fq 'to a commit SHA'; then
+	pass=$((pass + 1))
+else
+	printf 'FAIL: a bare SHA is not a publish-app.yaml pin (exit %s)\n%s\n' "$status" "$output" >&2
 	failures=$((failures + 1))
 fi
 

@@ -31,11 +31,13 @@ fail() {
 # The revision a cd.yaml pins publish-app.yaml to, validated as a full commit SHA.
 publish_pin() {
 	[ -f "$1" ] || fail "no cd.yaml at $1"
-	pin=$(yq eval -r '.jobs.publish.uses // "" | sub("^devantler-tech/actions/\.github/workflows/publish-app\.yaml@"; "")' "$1") ||
+	uses=$(yq eval -r '.jobs.publish.uses // ""' "$1") ||
 		fail "could not read the publish-app.yaml pin from $1"
-	printf '%s\n' "$pin" | grep -Eqx '[0-9a-f]{40}' ||
+	# Validate the whole reference first: a bare SHA, or another workflow pinned by SHA, is not a
+	# publish-app.yaml pin.
+	printf '%s\n' "$uses" | grep -Eqx 'devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}' ||
 		fail "$1 does not pin devantler-tech/actions/.github/workflows/publish-app.yaml to a commit SHA"
-	printf '%s\n' "$pin"
+	printf '%s\n' "${uses##*@}"
 }
 
 base_pin=$(publish_pin "$1")
@@ -62,26 +64,34 @@ fi
 # of them fails instead of comparing against the wrong field.
 approved=$(printf '%s\n' "$approved_set" | awk -F '\t' -v consumer="$consumer" '
 	NR == 1 {
-		for (i = 1; i <= NF; i++) col[$i] = i
+		for (i = 1; i <= NF; i++) { seen[$i]++; col[$i] = i }
+		split("consumer workflow applied_signer_sha main_pin_sha release_candidate_sha", required, " ")
+		for (r in required) if (seen[required[r]] > 1) { bad = 1; exit }
 		if (!col["consumer"] || !col["workflow"] || !col["applied_signer_sha"] ||
 			!col["main_pin_sha"] || !col["release_candidate_sha"]) { bad = 1; exit }
 		next
 	}
 	$col["consumer"] == consumer && $col["workflow"] == "publish-app" {
 		rows++
-		print $col["applied_signer_sha"]
-		print $col["main_pin_sha"]
-		print $col["release_candidate_sha"]
+		split("applied_signer_sha main_pin_sha release_candidate_sha", fields, " ")
+		for (f = 1; f <= 3; f++) {
+			value = $col[fields[f]]
+			if (value != "-" && (length(value) != 40 || value !~ /^[0-9a-f]+$/)) malformed = 1
+			print value
+		}
 	}
 	END {
 		if (bad) print "ERROR:header"
+		else if (malformed) print "ERROR:field"
 		else if (rows == 0) print "ERROR:none"
 		else if (rows > 1) print "ERROR:many"
 	}')
 
 case $approved in
 *ERROR:header*)
-	fail "the approved set lacks a consumer, workflow, applied_signer_sha, main_pin_sha or release_candidate_sha column" ;;
+	fail "the approved set must carry each of the consumer, workflow, applied_signer_sha, main_pin_sha and release_candidate_sha columns exactly once" ;;
+*ERROR:field*)
+	fail "the approved set's publish-app row for $consumer has a revision that is neither - nor a 40-character commit SHA" ;;
 *ERROR:none*)
 	fail "the approved set has no publish-app row for $consumer" ;;
 *ERROR:many*)
