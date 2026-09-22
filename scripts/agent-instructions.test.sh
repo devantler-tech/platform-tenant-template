@@ -97,6 +97,9 @@ validate_contract() {
 		"$agent_contract_file"
 	require_literal "an external pull request must never rest on a local review round" \
 		"never for an external contributor's pull request" "$agent_contract_file"
+	require_literal "an explicit CodeRabbit pre-merge problem must still count as a finding" \
+		"an explicit problem it reports as the current-head reviewer counts as a review finding" \
+		"$agent_contract_file"
 	require_literal "promotion must bind the exact current head" \
 		"exact current head" "$agent_contract_file"
 	require_literal "promotion must require a real user-path evaluation" \
@@ -216,6 +219,9 @@ run_mutation() {
 	local-review-for-external)
 		mutate_agents "s/never for an external contributor's pull request/for any pull request/"
 		;;
+	ignore-premerge-problem)
+		mutate_agents 's/but an explicit problem it reports as the current-head reviewer counts as a review finding/so ignore what it reports/'
+		;;
 	remove-user-path)
 		mutate_agents 's/must also be tried/must only be reviewed/'
 		;;
@@ -280,6 +286,7 @@ run_mutation "retired two-lane review gate restored" restore-two-lane-review
 run_mutation "retired CodeRabbit pre-merge gate restored" restore-premerge-gate
 run_mutation "local review round no longer a last resort" unguard-local-review
 run_mutation "local review round allowed on external PRs" local-review-for-external
+run_mutation "explicit CodeRabbit pre-merge problem ignored" ignore-premerge-problem
 run_mutation "user-path evaluation removed" remove-user-path
 run_mutation "positive ownership procedure removed" remove-ownership-procedure
 run_mutation "external static review removed" drop-external-static-review

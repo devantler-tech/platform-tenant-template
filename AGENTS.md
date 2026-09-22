@@ -53,7 +53,9 @@ reason recorded, or parked on a named blocker — whoever authored it.
 External-contributor pull requests are reviewed statically and merged under the
 same gates, but their branch is **never checked out or executed** locally: CI is
 the only place their code runs, and merging one also needs a recorded evaluation
-of a CI run that exercised its change at the current head.
+of a CI run that exercised its change at the current head — or, for a change with
+no runtime surface such as a docs-only fix, a recorded static evaluation saying
+why nothing runs.
 
 Issues authored by Renovate or Dependabot, such as a Dependency Dashboard, are
 **AUTOMATION-OWNED (NO-ACTION)**: never select, edit, or close them. Their pull
@@ -75,7 +77,9 @@ CodeRabbit, Codex, or Cursor Bugbot. Request those lanes one at a time in that
 order and stop at the first success; only when none of the three will deliver at
 that head may a clean local review round, posted as a real review, stand in —
 never for an external contributor's pull request. CodeRabbit's pre-merge output
-is ancillary and never a readiness gate. The change must also be tried and
+is ancillary and never a separate readiness gate, but an explicit problem it
+reports as the current-head reviewer counts as a review finding to fix or refute.
+The change must also be tried and
 evaluated through a real user path. Immediately before merging, re-read the
 state, head, author, draft state, title, review surfaces, unresolved threads,
 and mergeability; merge only a CLEAN promoted pull request, pinned to this
