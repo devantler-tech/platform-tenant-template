@@ -16,12 +16,16 @@ expected_oidc_issuer='^https://token\.actions\.githubusercontent\.com$'
 # Platform's trust rule for tenant release streams, and pinning it here is the
 # security property: it accepts only the shared actions workflow signed from a
 # 40-hex commit SHA — no tag, no branch, no wildcard — so every other ref form fails
-# to verify. Platform declares this rule verbatim on both tenant sites — the tenant
-# ResourceGraphDefinition every new tenant inherits, and each manually declared
-# tenant's own OCIRepository — so both sites are compared verbatim.
+# to verify. The tenant ResourceGraphDefinition every new tenant inherits declares
+# this rule verbatim, so it is compared verbatim.
 expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
+# A manually declared tenant's own OCIRepository is narrower: platform writes an
+# explicit alternation of its approved publish-app.yaml revisions (full 40-hex SHAs)
+# from scripts/publish-workflow-approved-revisions.tsv. Which SHAs is platform's
+# business; that the subject names only full SHAs, and no wildcard, is the contract.
+expected_manual_oidc_subject_shape='^\^https://github\\\.com/devantler-tech/actions/\\\.github/workflows/publish-app\\\.yaml@\((?:[0-9a-f]{40})(?:\|[0-9a-f]{40})*\)\$$'
 export expected_publish_workflow expected_publish_app_name
-export expected_oidc_issuer expected_oidc_subject
+export expected_oidc_issuer expected_oidc_subject expected_manual_oidc_subject_shape
 
 fail() {
 	echo "FAIL: $*" >&2
@@ -302,7 +306,7 @@ validate_platform() {
 		and (.spec.verify | has("secretRef") | not)
 		and (.spec.verify.matchOIDCIdentity | length) == 1
 		and .spec.verify.matchOIDCIdentity[0].issuer == strenv(expected_oidc_issuer)
-		and .spec.verify.matchOIDCIdentity[0].subject == strenv(expected_oidc_subject)
+		and (.spec.verify.matchOIDCIdentity[0].subject | test(strenv(expected_manual_oidc_subject_shape)))
 	' "$manual_oci_repository" >/dev/null || fail "manual Platform tenant OCI source no longer requires the signed private artifact"
 
 	# shellcheck disable=SC2016
