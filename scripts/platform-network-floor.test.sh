@@ -11,6 +11,22 @@ fail() {
 	exit 1
 }
 
+# Evaluate one boolean yq assertion and fail with the cause actually observed.
+# yq exits non-zero only when it cannot evaluate the expression — for example
+# `keys` on a path that resolved to null — so the input lacks the structure the
+# check navigates and no verdict was reached. Only an expression that evaluates
+# to anything other than true reports the check's own verdict.
+assert_yq() {
+	verdict=$1
+	document=$2
+	expression=$3
+	if ! assert_output=$(yq eval "$expression" "$document" 2>/dev/null); then
+		assert_error=$(yq eval "$expression" "$document" 2>&1 >/dev/null || true)
+		fail "cannot evaluate \"$verdict\": a path this check reads is missing or has an unexpected type in $document, so no policy verdict was reached ($assert_error)"
+	fi
+	[ "$(printf '%s\n' "$assert_output" | tail -n 1)" = true ] || fail "$verdict"
+}
+
 # Bind the scaffold's two default hostnames to Platform's live local and
 # production domains. Custom domains are added after adoption; the template
 # baseline deliberately starts with exactly these two paved-road values.
@@ -27,14 +43,13 @@ validate_platform_route_hostnames() {
 		cluster_name=${cluster_domain_pair%%:*}
 		values_file=${cluster_domain_pair#*:}
 		export cluster_name
-		yq eval -e '
+		assert_yq "Platform $cluster_name domain source is incomplete" "$values_file" '
 			.kind == "ConfigMap"
 			and .metadata.name == "variables-cluster"
 			and .metadata.namespace == "flux-system"
 			and .data.cluster_name == strenv(cluster_name)
 			and (.data.domain | test("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"))
-		' "$values_file" >/dev/null ||
-			fail "Platform $cluster_name domain source is incomplete"
+		'
 	done
 
 	local_domain=$(yq eval -r '.data.domain' "$local_values")
@@ -43,14 +58,13 @@ validate_platform_route_hostnames() {
 		fail "Platform local and production domains must remain distinct"
 	export local_domain prod_domain
 
-	yq eval -e '
+	assert_yq "rendered tenant HTTPRoute no longer carries both live Platform domains" "$http_route" '
 		.kind == "HTTPRoute"
 		and .metadata.name == "app"
 		and (.spec.hostnames | length) == 2
 		and (.spec.hostnames | contains(["app." + strenv(local_domain)]))
 		and (.spec.hostnames | contains(["app." + strenv(prod_domain)]))
-	' "$http_route" >/dev/null ||
-		fail "rendered tenant HTTPRoute no longer carries both live Platform domains"
+	'
 }
 
 validate_network_floor() {
@@ -78,7 +92,7 @@ validate_network_floor() {
 	# Keep independent assertions in an array. yq's boolean operator changes the
 	# input context of its right-hand expression, which can hide missing fields.
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "Platform generated network floor no longer has all four required rules" "$platform_policy" '
 		[
 			.kind == "ClusterPolicy",
 			.metadata.name == "add-default-deny",
@@ -92,10 +106,9 @@ validate_network_floor() {
 				.generate.kind == "NetworkPolicy"
 			] | any)] | length) == 4
 		] | all
-	' "$platform_policy" >/dev/null ||
-		fail "Platform generated network floor no longer has all four required rules"
+	'
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "Platform generated Cilium default-deny gained a traffic matcher or lost its fail-closed shape" "$platform_policy" '
 		.spec.rules[] | select(.name == "generate-default-deny") | [
 			(has("preconditions") | not),
 			(.match | keys | length) == 1,
@@ -125,10 +138,9 @@ validate_network_floor() {
 			(.generate.data.spec | has("ingressDeny") | not),
 			(.generate.data.spec | has("egressDeny") | not)
 		] | all
-	' "$platform_policy" >/dev/null ||
-		fail "Platform generated Cilium default-deny gained a traffic matcher or lost its fail-closed shape"
+	'
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "Platform generated DNS allowance no longer covers kube-dns over TCP and UDP" "$platform_policy" '
 		.spec.rules[] | select(.name == "generate-allow-dns") | [
 			(has("preconditions") | not),
 			(.match | keys | length) == 1,
@@ -160,10 +172,9 @@ validate_network_floor() {
 			(.generate.data.spec.egress[0].toPorts[0] | keys | length) == 1,
 			(.generate.data.spec.egress[0].toPorts[0].ports | [(length == 2), contains([{"port": "53", "protocol": "TCP"}]), contains([{"port": "53", "protocol": "UDP"}])] | all)
 		] | all
-	' "$platform_policy" >/dev/null ||
-		fail "Platform generated DNS allowance no longer covers kube-dns over TCP and UDP"
+	'
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "Platform generated CloudNativePG operator allowance no longer covers the instance ports" "$platform_policy" '
 		.spec.rules[] | select(.name == "generate-allow-cnpg-operator") | [
 			(has("preconditions") | not),
 			(.match | keys | length) == 1,
@@ -199,10 +210,9 @@ validate_network_floor() {
 			(.generate.data.spec.ingress[0].toPorts[0] | keys | length) == 1,
 			(.generate.data.spec.ingress[0].toPorts[0].ports | [(length == 2), contains([{"port": "8000", "protocol": "TCP"}]), contains([{"port": "5432", "protocol": "TCP"}])] | all)
 		] | all
-	' "$platform_policy" >/dev/null ||
-		fail "Platform generated CloudNativePG operator allowance no longer covers the instance ports"
+	'
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "Platform generated network floor no longer has the compatible default-deny, DNS, and standard-policy shape" "$platform_policy" '
 		.spec.rules[] | select(.name == "generate-default-deny-networkpolicy") | [
 			(has("preconditions") | not),
 			(.match | keys | length) == 1,
@@ -224,14 +234,13 @@ validate_network_floor() {
 			(.generate.data.spec | has("ingress") | not),
 			(.generate.data.spec | has("egress") | not)
 		] | all
-	' "$platform_policy" >/dev/null ||
-		fail "Platform generated network floor no longer has the compatible default-deny, DNS, and standard-policy shape"
+	'
 
 	# Bind the Gateway allowance to the rendered route, Service, and Deployment
 	# rather than a duplicated literal port. A valid Kustomize patch must not be
 	# able to move the workload while leaving this contract green.
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "rendered tenant Service lacks one named HTTP port" "$service" '
 		[
 			.kind == "Service",
 			.metadata.name == "app",
@@ -243,9 +252,9 @@ validate_network_floor() {
 				((.protocol // "TCP") == "TCP")
 			] | all)] | length) == 1
 		] | all
-	' "$service" >/dev/null || fail "rendered tenant Service lacks one named HTTP port"
+	'
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "rendered tenant Deployment lacks the app container" "$deployment" '
 		[
 			.kind == "Deployment",
 			.metadata.name == "app",
@@ -256,9 +265,9 @@ validate_network_floor() {
 			.spec.template.metadata.labels."app.kubernetes.io/name" == "app",
 			([.spec.template.spec.containers[] | select(.name == "app")] | length) == 1
 		] | all
-	' "$deployment" >/dev/null || fail "rendered tenant Deployment lacks the app container"
+	'
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "rendered tenant HTTPRoute lacks one local core Service app backend" "$http_route" '
 		[
 			.kind == "HTTPRoute",
 			.metadata.name == "app",
@@ -280,8 +289,7 @@ validate_network_floor() {
 				((.weight // 1) > 0)
 			] | all)] | length) == 1
 		] | all
-	' "$http_route" >/dev/null ||
-		fail "rendered tenant HTTPRoute lacks one local core Service app backend"
+	'
 
 	app_service_port=$(yq eval -r '.spec.ports[] | select(.name == "http") | .port | tostring' "$service")
 	app_target_port=$(yq eval -r '.spec.ports[] | select(.name == "http") | .targetPort | tostring' "$service")
@@ -290,16 +298,15 @@ validate_network_floor() {
 	esac
 	export app_service_port app_target_port
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "rendered Service targetPort no longer matches the app container port" "$deployment" '
 		[.spec.template.spec.containers[]
 			| select(.name == "app")
 			| .ports[]
 			| select((.containerPort | tostring) == strenv(app_target_port))
 		] | length == 1
-	' "$deployment" >/dev/null ||
-		fail "rendered Service targetPort no longer matches the app container port"
+	'
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "rendered HTTPRoute backend port no longer matches the app Service port" "$http_route" '
 		[.spec.rules[].backendRefs[]
 			| select([
 				.name == "app",
@@ -310,11 +317,10 @@ validate_network_floor() {
 				((.port | tostring) == strenv(app_service_port))
 			] | all)
 		] | length == 1
-	' "$http_route" >/dev/null ||
-		fail "rendered HTTPRoute backend port no longer matches the app Service port"
+	'
 
 	# shellcheck disable=SC2016
-	yq eval -e '
+	assert_yq "rendered tenant scaffold no longer re-opens Gateway, intra-namespace and Kubernetes API traffic with label-pinned selectors" "$scaffold_policy" '
 		[
 			.kind == "CiliumNetworkPolicy",
 			.metadata.name == "app",
@@ -350,8 +356,7 @@ validate_network_floor() {
 			(.spec.egress[] | select(.toEntities | contains(["kube-apiserver"])) | keys | length) == 1,
 			(.spec.egress[] | select(.toEntities | contains(["kube-apiserver"])) | .toEntities | [(length == 1), contains(["kube-apiserver"])] | all)
 		] | all
-	' "$scaffold_policy" >/dev/null ||
-		fail "rendered tenant scaffold no longer re-opens Gateway, intra-namespace and Kubernetes API traffic with label-pinned selectors"
+	'
 }
 
 extract_rendered_resource() {
@@ -479,6 +484,39 @@ deployment=$rendered_root/deployment.yaml
 http_route=$rendered_root/http-route.yaml
 validate_network_floor "$platform_policy" "$scaffold_policy" "$service" "$deployment" "$http_route"
 validate_platform_route_hostnames "$platform_root" "$http_route"
+
+# A failing check must report the cause it observed. A check that cannot
+# navigate its input (a path resolved to null) and a check that evaluates false
+# call for opposite responses — repair the query versus react to a real Platform
+# change — so each cause is driven here and must print only its own message.
+default_deny_verdict="Platform generated Cilium default-deny gained a traffic matcher or lost its fail-closed shape"
+check_failure_cause() {
+	description=$1
+	match=$2
+	expected=$3
+	mutation=$4
+	yq eval "$mutation" "$platform_policy" > "$mutation_dir/cause-mutant.yaml"
+	if cause_output=$( (validate_network_floor \
+		"$mutation_dir/cause-mutant.yaml" \
+		"$scaffold_policy" \
+		"$service" \
+		"$deployment" \
+		"$http_route") 2>&1); then
+		fail "failure-cause control passed: $description"
+	fi
+	case "$match" in
+	exact) [ "$cause_output" = "$expected" ] ;;
+	prefix) case "$cause_output" in "$expected"*) true ;; *) false ;; esac ;;
+	*) fail "unknown failure-cause match: $match" ;;
+	esac ||
+		fail "failure-cause control reported the wrong cause ($description): $cause_output"
+}
+check_failure_cause "a path the default-deny check reads resolves to null" prefix \
+	"FAIL: cannot evaluate \"$default_deny_verdict\"" \
+	'del(.spec.rules[] | select(.name == "generate-default-deny").match)'
+check_failure_cause "the default-deny check evaluates false" exact \
+	"FAIL: $default_deny_verdict" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.enableDefaultDeny.ingress) = false'
 
 platform_baseline=$mutation_dir/platform.yaml
 scaffold_baseline=$mutation_dir/scaffold.yaml
