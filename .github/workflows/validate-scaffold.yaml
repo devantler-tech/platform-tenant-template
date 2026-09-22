@@ -86,6 +86,29 @@ jobs:
               "github.repository == 'devantler-tech/platform-tenant-template'"
           )
           export expected_if
+          # The drift reporter's conditions are pinned exactly: a widened job
+          # condition would let non-scheduled runs open or close the issue, and a
+          # flipped step condition would stop failures ever being reported.
+          expected_report_if=$(
+            printf '%s' \
+              "!cancelled()" \
+              " && github.repository == 'devantler-tech/platform-tenant-template'" \
+              " && github.ref == 'refs/heads/main'" \
+              " && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
+          )
+          expected_report_failure_if=$(
+            printf '%s' \
+              "needs.validate-scaffold.result != 'success'" \
+              " || needs.admissibility.result != 'success'" \
+              " || needs.pod-security-admission.result != 'success'"
+          )
+          expected_report_success_if=$(
+            printf '%s' \
+              "needs.validate-scaffold.result == 'success'" \
+              " && needs.admissibility.result == 'success'" \
+              " && needs.pod-security-admission.result == 'success'"
+          )
+          export expected_report_if expected_report_failure_if expected_report_success_if
           assert_yaml() {
             description=$1
             expression=$2
@@ -187,15 +210,20 @@ jobs:
             .jobs."report-scheduled-drift" | [
               (.needs | length) == 3,
               (.needs | contains(["admissibility", "pod-security-admission", "validate-scaffold"])),
-              (.if | test("!cancelled\\(\\)")),
-              (.if | test("github.event_name == .schedule.")),
-              (.if | test("github.ref == .refs/heads/main.")),
-              (.if | test("github.repository == .devantler-tech/platform-tenant-template.")),
+              .if == strenv(expected_report_if),
               (.permissions | keys | length) == 1,
               .permissions.issues == "write",
               (has("continue-on-error") | not),
               ([.steps[] | select((.uses // "") | test("^devantler-tech/actions/upsert-issue@[0-9a-f]{40}$"))] | length) == 2,
-              ([.steps[] | select(.with.open == "false")] | length) == 1
+              ([.steps[] | select(.with.open == "false")] | length) == 1,
+              ([.steps[] | select(
+                (.if // "") == strenv(expected_report_failure_if)
+                and ((.with.open // "true") == "true")
+              )] | length) == 1,
+              ([.steps[] | select(
+                (.if // "") == strenv(expected_report_success_if)
+                and .with.open == "false"
+              )] | length) == 1
             ] | all
           '
           assert_yaml "tenant SecretStore admission must stay context- and mutation-proved" \
