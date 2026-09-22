@@ -492,9 +492,8 @@ cp "$deployment" "$deployment_baseline"
 cp "$http_route" "$http_route_baseline"
 
 # Every run_*_mutation helper counts itself, so the PASS line reports the
-# mutations that actually executed. `+ 1` rather than ((n++)): under `set -e`
-# the latter returns 1 on the increment from zero and would abort the suite on
-# its very first mutation.
+# mutations that actually executed. The increment uses POSIX arithmetic
+# expansion because this is an `sh` script; `((n++))` is not POSIX.
 mutations_run=0
 
 run_platform_mutation() {
