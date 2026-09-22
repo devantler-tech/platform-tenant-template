@@ -491,7 +491,13 @@ cp "$service" "$service_baseline"
 cp "$deployment" "$deployment_baseline"
 cp "$http_route" "$http_route_baseline"
 
+# Every run_*_mutation helper counts itself, so the PASS line reports the
+# mutations that actually executed. The increment uses POSIX arithmetic
+# expansion because this is an `sh` script; `((n++))` is not POSIX.
+mutations_run=0
+
 run_platform_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	yq eval "$mutation" "$platform_baseline" > "$mutation_dir/platform-mutant.yaml"
@@ -506,6 +512,7 @@ run_platform_mutation() {
 }
 
 run_scaffold_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	yq eval "$mutation" "$scaffold_baseline" > "$mutation_dir/scaffold-mutant.yaml"
@@ -520,6 +527,7 @@ run_scaffold_mutation() {
 }
 
 run_service_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	yq eval "$mutation" "$service_baseline" > "$mutation_dir/service-mutant.yaml"
@@ -534,6 +542,7 @@ run_service_mutation() {
 }
 
 run_deployment_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	yq eval "$mutation" "$deployment_baseline" > "$mutation_dir/deployment-mutant.yaml"
@@ -548,6 +557,7 @@ run_deployment_mutation() {
 }
 
 run_http_route_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	yq eval "$mutation" "$http_route_baseline" > "$mutation_dir/http-route-mutant.yaml"
@@ -565,6 +575,7 @@ run_http_route_mutation() {
 }
 
 run_hostname_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	local_mutation=$2
 	prod_mutation=$3
@@ -601,6 +612,7 @@ run_hostname_mutation() {
 }
 
 run_rendered_scaffold_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	mutant_deploy=$mutation_dir/deploy-mutant
@@ -620,6 +632,7 @@ run_rendered_scaffold_mutation() {
 }
 
 run_platform_inventory_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	mutant_platform_root=$mutation_dir/platform-inventory-mutant
@@ -639,6 +652,7 @@ run_platform_inventory_mutation() {
 }
 
 run_additional_platform_policy_mutation() {
+	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
 	mutant_platform_root=$mutation_dir/additional-policy-mutant
@@ -788,4 +802,4 @@ run_http_route_mutation "HTTPRoute backend identity and port split across differ
 run_rendered_scaffold_mutation "Kustomize patch removed rendered Gateway allowance" \
 	'.patches = [{"target": {"kind": "CiliumNetworkPolicy", "name": "app"}, "patch": "- op: remove\n  path: /spec/ingress/0"}]'
 
-echo "PASS: Platform network floor (generated policies + tenant allows + live route domains + 60 safety mutations)"
+echo "PASS: Platform network floor (generated policies + tenant allows + live route domains + ${mutations_run} safety mutations)"
