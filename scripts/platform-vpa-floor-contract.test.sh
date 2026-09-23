@@ -42,11 +42,14 @@ validate_contract() {
 		] | length == 1
 	' "$workflow_file" >/dev/null ||
 		fail "Platform VPA-floor checkout is missing or mutable"
+	# The step may run only once the shared policies are checked out, so it reports on its own
+	# instead of being skipped by an unrelated earlier failure. Any other condition can skip it.
 	# shellcheck disable=SC2016
-	yq eval -e '
+	CONTRACT_IF="!cancelled() && steps.checkout-shared-policies.outcome == 'success'" yq eval -e '
 		[.jobs.admissibility.steps[] | select(
 			(.run // "") == "sh scripts/platform-vpa-floor.test.sh"
-			and ((has("if") or has("continue-on-error")) | not)
+			and (has("continue-on-error") | not)
+			and ((has("if") | not) or .if == strenv(CONTRACT_IF))
 		)] | length == 1
 	' "$workflow_file" >/dev/null ||
 		fail "Platform VPA-floor runtime step is missing or conditional"
