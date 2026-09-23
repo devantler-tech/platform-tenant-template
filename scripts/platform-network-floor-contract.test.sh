@@ -7,7 +7,7 @@ script_dir=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd)
 repo_root=$(dirname -- "$script_dir")
 workflow=$repo_root/.github/workflows/validate-scaffold.yaml
 runtime=$repo_root/scripts/platform-network-floor.test.sh
-readme=$repo_root/README.md
+reference=$repo_root/docs/REFERENCE.md
 template_sync_ignore=$repo_root/.templatesyncignore
 
 fail() {
@@ -18,7 +18,7 @@ fail() {
 validate_contract() {
 	workflow_file=$1
 	runtime_file=$2
-	readme_file=$3
+	reference_file=$3
 	ignore_file=$4
 
 	[ -f "$runtime_file" ] || fail "Platform network-floor runtime is missing"
@@ -127,32 +127,32 @@ validate_contract() {
 		found && /^```gitignore$/ { inside = 1; next }
 		inside && /^```$/ { exit }
 		inside { print }
-	' "$readme_file")
+	' "$reference_file")
 	for scaffold_path in \
 		'scripts/platform-network-floor.test.sh' \
 		'scripts/platform-network-floor-contract.test.sh'
 	do
 		printf '%s\n' "$owned_ignore_block" | grep -Fxq -- "$scaffold_path" ||
-			fail "README ignore example lacks: $scaffold_path"
+			fail "reference ignore example lacks: $scaffold_path"
 		grep -Fxq -- "$scaffold_path" "$ignore_file" ||
 			fail ".templatesyncignore lacks: $scaffold_path"
 	done
 
 	# shellcheck disable=SC2016
-	grep -Fq '`scripts/platform-network-floor*.test.sh`' "$readme_file" ||
-		fail "README ownership table lacks the Platform network-floor contract"
-	grep -Fq 'sh scripts/platform-network-floor-contract.test.sh' "$readme_file" ||
-		fail "README local validation lacks the Platform network-floor contract"
+	grep -Fq '`scripts/platform-network-floor*.test.sh`' "$reference_file" ||
+		fail "reference ownership table lacks the Platform network-floor contract"
+	grep -Fq 'sh scripts/platform-network-floor-contract.test.sh' "$reference_file" ||
+		fail "reference local validation lacks the Platform network-floor contract"
 }
 
 if [ "${1:-}" = "--validate" ]; then
 	[ "$#" -eq 5 ] ||
-		fail "usage: $0 --validate <workflow> <runtime> <readme> <ignore>"
+		fail "usage: $0 --validate <workflow> <runtime> <reference> <ignore>"
 	validate_contract "$2" "$3" "$4" "$5"
 	exit 0
 fi
 
-validate_contract "$workflow" "$runtime" "$readme" "$template_sync_ignore"
+validate_contract "$workflow" "$runtime" "$reference" "$template_sync_ignore"
 
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
@@ -163,12 +163,12 @@ run_mutation() {
 	description=$1
 	workflow_mutation=$2
 	runtime_mutation=$3
-	readme_mutation=${4:-}
+	reference_mutation=${4:-}
 	ignore_mutation=${5:-}
 
 	cp "$workflow" "$mutation_dir/workflow.yaml"
 	cp "$runtime" "$mutation_dir/runtime.sh"
-	cp "$readme" "$mutation_dir/README.md"
+	cp "$reference" "$mutation_dir/REFERENCE.md"
 	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
 
 	if [ -n "$workflow_mutation" ]; then
@@ -179,9 +179,9 @@ run_mutation() {
 		sed "$runtime_mutation" "$mutation_dir/runtime.sh" > "$mutation_dir/mutant.sh"
 		mv "$mutation_dir/mutant.sh" "$mutation_dir/runtime.sh"
 	fi
-	if [ -n "$readme_mutation" ]; then
-		sed "$readme_mutation" "$mutation_dir/README.md" > "$mutation_dir/mutant.md"
-		mv "$mutation_dir/mutant.md" "$mutation_dir/README.md"
+	if [ -n "$reference_mutation" ]; then
+		sed "$reference_mutation" "$mutation_dir/REFERENCE.md" > "$mutation_dir/mutant.md"
+		mv "$mutation_dir/mutant.md" "$mutation_dir/REFERENCE.md"
 	fi
 	if [ -n "$ignore_mutation" ]; then
 		sed "$ignore_mutation" "$mutation_dir/templatesyncignore" > "$mutation_dir/mutant.ignore"
@@ -191,7 +191,7 @@ run_mutation() {
 	if (validate_contract \
 		"$mutation_dir/workflow.yaml" \
 		"$mutation_dir/runtime.sh" \
-		"$mutation_dir/README.md" \
+		"$mutation_dir/REFERENCE.md" \
 		"$mutation_dir/templatesyncignore") >/dev/null 2>&1; then
 		fail "mutation passed: $description"
 	fi
@@ -229,18 +229,18 @@ run_mutation "failure-cause controls removed" '' '/^check_failure_cause "/d'
 run_mutation "Service mutation control invocations removed" '' '/^run_service_mutation "/d'
 run_mutation "Deployment mutation control invocation removed" '' '/^run_deployment_mutation "/d'
 run_mutation "HTTPRoute mutation control invocations removed" '' '/^run_http_route_mutation "/d'
-run_mutation "README runtime ownership marker removed" '' '' \
+run_mutation "reference runtime ownership marker removed" '' '' \
 	'/^scripts\/platform-network-floor\.test\.sh$/d'
 run_mutation ".templatesyncignore runtime marker removed" '' '' '' \
 	'/^scripts\/platform-network-floor\.test\.sh$/d'
-run_mutation "README contract ownership marker removed" '' '' \
+run_mutation "reference contract ownership marker removed" '' '' \
 	'/^scripts\/platform-network-floor-contract\.test\.sh$/d'
 run_mutation ".templatesyncignore contract marker removed" '' '' '' \
 	'/^scripts\/platform-network-floor-contract\.test\.sh$/d'
 # shellcheck disable=SC2016
-run_mutation "README ownership table marker removed" '' '' \
+run_mutation "reference ownership table marker removed" '' '' \
 	'/`scripts\/platform-network-floor\*\.test\.sh`/d'
-run_mutation "README local validation marker removed" '' '' \
+run_mutation "reference local validation marker removed" '' '' \
 	'/sh scripts\/platform-network-floor-contract\.test\.sh/d'
 
 echo "PASS: Platform network-floor contract (happy path + ${mutations_run} safety mutations)"

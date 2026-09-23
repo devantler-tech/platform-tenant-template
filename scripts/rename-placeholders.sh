@@ -10,7 +10,7 @@
 #   • REPLACE_ME  — the container image and OpenBao path.
 #   • replace-me  — the tenant's Vault role and ServiceAccount.
 # (Per the template convention the Deployment container `name` MUST equal the
-# repository name — see README — so a single name drives everything.)
+# repository name — see docs/REFERENCE.md — so a single name drives everything.)
 #
 # Doing this by hand is easy to get half-wrong; this script renames all three
 # across deploy/*.yaml in place WITHOUT corrupting the parts that must NOT

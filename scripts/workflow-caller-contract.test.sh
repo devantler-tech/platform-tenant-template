@@ -9,7 +9,7 @@ release_workflow=$repo_root/.github/workflows/release.yaml
 template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
 validation_workflow=$repo_root/.github/workflows/validate-scaffold.yaml
 tenant_ci_workflow=$repo_root/.github/workflows/ci.yaml
-readme=$repo_root/README.md
+reference=$repo_root/docs/REFERENCE.md
 template_sync_ignore=$repo_root/.templatesyncignore
 dependabot_config=$repo_root/.github/dependabot.yml
 portable_contract=$repo_root/scripts/workflow-caller-pin-contract.test.sh
@@ -26,10 +26,10 @@ grep -Fqx 'scripts/workflow-caller-contract.test.sh' "$template_sync_ignore" ||
 if grep -Fqx 'scripts/workflow-caller-pin-contract.test.sh' "$template_sync_ignore"; then
 	fail 'the portable workflow-caller pin contract must reach tenants through template sync'
 fi
-grep -Fq "\`scripts/workflow-caller-pin-contract.test.sh\`" "$readme" ||
-	fail 'README ownership table lacks the portable workflow-caller pin contract'
-grep -Fq 'sh scripts/workflow-caller-pin-contract.test.sh' "$readme" ||
-	fail 'README local validation lacks the portable workflow-caller pin contract'
+grep -Fq "\`scripts/workflow-caller-pin-contract.test.sh\`" "$reference" ||
+	fail 'reference ownership table lacks the portable workflow-caller pin contract'
+grep -Fq 'sh scripts/workflow-caller-pin-contract.test.sh' "$reference" ||
+	fail 'reference local validation lacks the portable workflow-caller pin contract'
 yq eval -e '
 	[
 		.jobs."workflow-caller-pins".steps[]
@@ -48,7 +48,7 @@ validate_contract() {
 	release_file=$2
 	template_sync_file=$3
 	validation_file=$4
-	readme_file=$5
+	reference_file=$5
 	ignore_file=$6
 	dependabot_file=$7
 
@@ -128,21 +128,21 @@ validate_contract() {
 		found && /^```gitignore$/ { inside = 1; next }
 		inside && /^```$/ { exit }
 		inside { print }
-	' "$readme_file")
+	' "$reference_file")
 	printf '%s\n' "$owned_ignore_block" |
 		grep -Fxq -- 'scripts/workflow-caller-contract.test.sh' ||
-		fail 'README ignore example lacks the workflow-caller contract'
+		fail 'reference ignore example lacks the workflow-caller contract'
 	grep -Fxq -- 'scripts/workflow-caller-contract.test.sh' "$ignore_file" ||
 		fail '.templatesyncignore lacks the workflow-caller contract'
-	grep -Fq "\`scripts/workflow-caller-contract.test.sh\`" "$readme_file" ||
-		fail 'README ownership table lacks the workflow-caller contract'
-	grep -Fq 'sh scripts/workflow-caller-contract.test.sh' "$readme_file" ||
-		fail 'README local validation lacks the workflow-caller contract'
+	grep -Fq "\`scripts/workflow-caller-contract.test.sh\`" "$reference_file" ||
+		fail 'reference ownership table lacks the workflow-caller contract'
+	grep -Fq 'sh scripts/workflow-caller-contract.test.sh' "$reference_file" ||
+		fail 'reference local validation lacks the workflow-caller contract'
 }
 
 if [ "${1:-}" = "--validate" ]; then
 	[ "$#" -eq 8 ] ||
-		fail 'usage: workflow-caller-contract.test.sh --validate <cd> <release> <template-sync> <validation> <readme> <ignore> <dependabot>'
+		fail 'usage: workflow-caller-contract.test.sh --validate <cd> <release> <template-sync> <validation> <reference> <ignore> <dependabot>'
 	validate_contract "$2" "$3" "$4" "$5" "$6" "$7" "$8"
 	exit 0
 fi
@@ -152,7 +152,7 @@ validate_contract \
 	"$release_workflow" \
 	"$template_sync_workflow" \
 	"$validation_workflow" \
-	"$readme" \
+	"$reference" \
 	"$template_sync_ignore" \
 	"$dependabot_config"
 
@@ -170,7 +170,7 @@ run_mutation() {
 	cp "$release_workflow" "$mutation_dir/release.yaml"
 	cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
 	cp "$validation_workflow" "$mutation_dir/validation.yaml"
-	cp "$readme" "$mutation_dir/README.md"
+	cp "$reference" "$mutation_dir/REFERENCE.md"
 	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
 	cp "$dependabot_config" "$mutation_dir/dependabot.yml"
 
@@ -179,9 +179,9 @@ run_mutation() {
 		yq eval "$mutation" "$mutation_dir/$file_kind.yaml" > "$mutation_dir/mutant.yaml"
 		mv "$mutation_dir/mutant.yaml" "$mutation_dir/$file_kind.yaml"
 		;;
-	readme)
-		sed "$mutation" "$mutation_dir/README.md" > "$mutation_dir/mutant.md"
-		mv "$mutation_dir/mutant.md" "$mutation_dir/README.md"
+	reference)
+		sed "$mutation" "$mutation_dir/REFERENCE.md" > "$mutation_dir/mutant.md"
+		mv "$mutation_dir/mutant.md" "$mutation_dir/REFERENCE.md"
 		;;
 	ignore)
 		sed "$mutation" "$mutation_dir/templatesyncignore" > "$mutation_dir/mutant.ignore"
@@ -199,7 +199,7 @@ run_mutation() {
 		"$mutation_dir/release.yaml" \
 		"$mutation_dir/template-sync.yaml" \
 		"$mutation_dir/validation.yaml" \
-		"$mutation_dir/README.md" \
+		"$mutation_dir/REFERENCE.md" \
 		"$mutation_dir/templatesyncignore" \
 		"$mutation_dir/dependabot.yml") >/dev/null 2>&1; then
 		fail "mutation passed: $description"
@@ -224,11 +224,11 @@ run_mutation 'template-sync App token disabled' template-sync \
 	'.jobs."template-sync".with."use-app-token" = false'
 run_mutation 'required scaffold invocation removed' validation \
 	'del(.jobs."validate-scaffold".steps[] | select(.run == "sh scripts/workflow-caller-contract.test.sh"))'
-run_mutation 'README ownership table marker removed' readme \
+run_mutation 'reference ownership table marker removed' reference \
 	"/\`scripts\/workflow-caller-contract\.test\.sh\`/d"
-run_mutation 'README ignore marker removed' readme \
+run_mutation 'reference ignore marker removed' reference \
 	'/^scripts\/workflow-caller-contract\.test\.sh$/d'
-run_mutation 'README local validation marker removed' readme \
+run_mutation 'reference local validation marker removed' reference \
 	'/sh scripts\/workflow-caller-contract\.test\.sh/d'
 run_mutation 'actual ownership marker removed' ignore \
 	'/^scripts\/workflow-caller-contract\.test\.sh$/d'
@@ -257,7 +257,7 @@ run_fleet_mutation() {
 	cp "$release_workflow" "$mutation_dir/release.yaml"
 	cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
 	cp "$validation_workflow" "$mutation_dir/validation.yaml"
-	cp "$readme" "$mutation_dir/README.md"
+	cp "$reference" "$mutation_dir/REFERENCE.md"
 	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
 	cp "$dependabot_config" "$mutation_dir/dependabot.yml"
 
@@ -281,7 +281,7 @@ run_fleet_mutation() {
 		"$mutation_dir/release.yaml" \
 		"$mutation_dir/template-sync.yaml" \
 		"$mutation_dir/validation.yaml" \
-		"$mutation_dir/README.md" \
+		"$mutation_dir/REFERENCE.md" \
 		"$mutation_dir/templatesyncignore" \
 		"$mutation_dir/dependabot.yml") >/dev/null 2>&1; then
 		fail "mutation passed: $description"

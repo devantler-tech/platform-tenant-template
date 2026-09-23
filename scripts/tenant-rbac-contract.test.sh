@@ -7,7 +7,7 @@ repo_root=$(dirname -- "$script_dir")
 workflow=$repo_root/.github/workflows/validate-scaffold.yaml
 runtime=$repo_root/scripts/tenant-rbac.test.sh
 pod_security_runtime=$repo_root/scripts/pod-security-admission.test.sh
-readme=$repo_root/README.md
+reference=$repo_root/docs/REFERENCE.md
 template_sync_ignore=$repo_root/.templatesyncignore
 
 fail() {
@@ -19,7 +19,7 @@ validate_contract() {
 	workflow_file=$1
 	runtime_file=$2
 	pod_security_file=$3
-	readme_file=$4
+	reference_file=$4
 	ignore_file=$5
 
 	[ -f "$runtime_file" ] || fail "tenant RBAC runtime is missing"
@@ -100,13 +100,13 @@ validate_contract() {
 		found && /^```gitignore$/ { inside = 1; next }
 		inside && /^```$/ { exit }
 		inside { print }
-	' "$readme_file")
+	' "$reference_file")
 	for scaffold_path in \
 		'scripts/tenant-rbac.test.sh' \
 		'scripts/tenant-rbac-contract.test.sh'
 	do
 		printf '%s\n' "$owned_ignore_block" | grep -Fxq -- "$scaffold_path" ||
-			fail "README ignore example lacks: $scaffold_path"
+			fail "reference ignore example lacks: $scaffold_path"
 		grep -Fxq -- "$scaffold_path" "$ignore_file" ||
 			fail ".templatesyncignore lacks: $scaffold_path"
 	done
@@ -114,12 +114,12 @@ validate_contract() {
 
 if [ "${1:-}" = "--validate" ]; then
 	[ "$#" -eq 6 ] ||
-		fail "usage: $0 --validate <workflow> <runtime> <pod-security-runtime> <readme> <ignore>"
+		fail "usage: $0 --validate <workflow> <runtime> <pod-security-runtime> <reference> <ignore>"
 	validate_contract "$2" "$3" "$4" "$5" "$6"
 	exit 0
 fi
 
-validate_contract "$workflow" "$runtime" "$pod_security_runtime" "$readme" "$template_sync_ignore"
+validate_contract "$workflow" "$runtime" "$pod_security_runtime" "$reference" "$template_sync_ignore"
 
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
@@ -132,13 +132,13 @@ run_mutation() {
 	workflow_mutation=$2
 	runtime_mutation=$3
 	pod_security_mutation=$4
-	readme_mutation=${5:-}
+	reference_mutation=${5:-}
 	ignore_mutation=${6:-}
 
 	cp "$workflow" "$mutation_dir/workflow.yaml"
 	cp "$runtime" "$mutation_dir/runtime.sh"
 	cp "$pod_security_runtime" "$mutation_dir/pod-security.sh"
-	cp "$readme" "$mutation_dir/README.md"
+	cp "$reference" "$mutation_dir/REFERENCE.md"
 	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
 
 	if [ -n "$workflow_mutation" ]; then
@@ -153,9 +153,9 @@ run_mutation() {
 		sed "$pod_security_mutation" "$mutation_dir/pod-security.sh" > "$mutation_dir/mutant.sh"
 		mv "$mutation_dir/mutant.sh" "$mutation_dir/pod-security.sh"
 	fi
-	if [ -n "$readme_mutation" ]; then
-		sed "$readme_mutation" "$mutation_dir/README.md" > "$mutation_dir/mutant.md"
-		mv "$mutation_dir/mutant.md" "$mutation_dir/README.md"
+	if [ -n "$reference_mutation" ]; then
+		sed "$reference_mutation" "$mutation_dir/REFERENCE.md" > "$mutation_dir/mutant.md"
+		mv "$mutation_dir/mutant.md" "$mutation_dir/REFERENCE.md"
 	fi
 	if [ -n "$ignore_mutation" ]; then
 		sed "$ignore_mutation" "$mutation_dir/templatesyncignore" > "$mutation_dir/mutant.ignore"
@@ -166,7 +166,7 @@ run_mutation() {
 		"$mutation_dir/workflow.yaml" \
 		"$mutation_dir/runtime.sh" \
 		"$mutation_dir/pod-security.sh" \
-		"$mutation_dir/README.md" \
+		"$mutation_dir/REFERENCE.md" \
 		"$mutation_dir/templatesyncignore") >/dev/null 2>&1; then
 		fail "mutation passed: $description"
 	fi

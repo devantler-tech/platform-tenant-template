@@ -7,6 +7,7 @@ repo_root=$(dirname -- "$script_dir")
 ci_workflow=$repo_root/.github/workflows/ci.yaml
 scaffold_workflow=$repo_root/.github/workflows/validate-scaffold.yaml
 readme=$repo_root/README.md
+reference=$repo_root/docs/REFERENCE.md
 agents=$repo_root/AGENTS.md
 template_sync_ignore=$repo_root/.templatesyncignore
 
@@ -21,6 +22,7 @@ validate_contract() {
 	readme_file=$3
 	agents_file=$4
 	ignore_file=$5
+	reference_file=$6
 
 	assert_ci() {
 		description=$1
@@ -175,8 +177,8 @@ validate_contract() {
 	# shellcheck disable=SC2016
 	grep -Fq 'Default PR CI always builds the tenant image and renders `deploy/`' \
 		"$readme_file" || fail "README omits the delivery-input invariant"
-	grep -Fq 'sh scripts/tenant-ci-contract.test.sh' "$readme_file" ||
-		fail "README local validation omits the tenant CI contract"
+	grep -Fq 'sh scripts/tenant-ci-contract.test.sh' "$reference_file" ||
+		fail "reference local validation omits the tenant CI contract"
 	# shellcheck disable=SC2016
 	tr '\n' ' ' < "$agents_file" |
 		grep -Fq 'build the tenant image and render `deploy/` before merge' ||
@@ -186,9 +188,9 @@ validate_contract() {
 }
 
 if [ "${1:-}" = "--validate" ]; then
-	[ "$#" -eq 6 ] ||
-		fail "usage: $0 --validate <ci> <scaffold> <README> <AGENTS> <templatesyncignore>"
-	validate_contract "$2" "$3" "$4" "$5" "$6"
+	[ "$#" -eq 7 ] ||
+		fail "usage: $0 --validate <ci> <scaffold> <README> <AGENTS> <templatesyncignore> <reference>"
+	validate_contract "$2" "$3" "$4" "$5" "$6" "$7"
 	exit 0
 fi
 
@@ -197,7 +199,8 @@ validate_contract \
 	"$scaffold_workflow" \
 	"$readme" \
 	"$agents" \
-	"$template_sync_ignore"
+	"$template_sync_ignore" \
+	"$reference"
 
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
@@ -209,12 +212,14 @@ run_mutation() {
 	readme_mutation=${4:-}
 	agents_mutation=${5:-}
 	ignore_mutation=${6:-}
+	reference_mutation=${7:-}
 
 	cp "$ci_workflow" "$mutation_dir/ci.yaml"
 	cp "$scaffold_workflow" "$mutation_dir/scaffold.yaml"
 	cp "$readme" "$mutation_dir/README.md"
 	cp "$agents" "$mutation_dir/AGENTS.md"
 	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
+	cp "$reference" "$mutation_dir/REFERENCE.md"
 
 	if [ -n "$ci_mutation" ]; then
 		yq eval "$ci_mutation" "$mutation_dir/ci.yaml" > "$mutation_dir/mutant.yaml"
@@ -236,13 +241,18 @@ run_mutation() {
 		sed "$ignore_mutation" "$mutation_dir/templatesyncignore" > "$mutation_dir/mutant.ignore"
 		mv "$mutation_dir/mutant.ignore" "$mutation_dir/templatesyncignore"
 	fi
+	if [ -n "$reference_mutation" ]; then
+		sed "$reference_mutation" "$mutation_dir/REFERENCE.md" > "$mutation_dir/mutant.md"
+		mv "$mutation_dir/mutant.md" "$mutation_dir/REFERENCE.md"
+	fi
 
 	if (validate_contract \
 		"$mutation_dir/ci.yaml" \
 		"$mutation_dir/scaffold.yaml" \
 		"$mutation_dir/README.md" \
 		"$mutation_dir/AGENTS.md" \
-		"$mutation_dir/templatesyncignore") >/dev/null 2>&1; then
+		"$mutation_dir/templatesyncignore" \
+		"$mutation_dir/REFERENCE.md") >/dev/null 2>&1; then
 		fail "mutation passed: $description"
 	fi
 }
@@ -324,11 +334,11 @@ run_mutation "contract invocation removed" '' \
 	'del(.jobs."validate-scaffold".steps[] | select((.run // "") == "sh scripts/tenant-ci-contract.test.sh"))'
 run_mutation "README invariant removed" '' '' \
 	'/Default PR CI always builds the tenant image/d'
-run_mutation "README local validation command removed" '' '' \
-	'/sh scripts\/tenant-ci-contract.test.sh/d'
 run_mutation "scaffolded validation invariant removed" '' '' '' \
 	'/build the tenant image/d'
 run_mutation "contract ignore removed" '' '' '' '' \
 	'/^scripts\/tenant-ci-contract\.test\.sh$/d'
+run_mutation "reference local validation command removed" '' '' '' '' '' \
+	'/sh scripts\/tenant-ci-contract.test.sh/d'
 
 echo "PASS: tenant CI contract (happy path + 37 safety mutations)"
