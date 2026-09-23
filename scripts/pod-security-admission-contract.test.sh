@@ -6,7 +6,7 @@ script_dir=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd)
 repo_root=$(dirname -- "$script_dir")
 workflow=$repo_root/.github/workflows/validate-scaffold.yaml
 runtime=$repo_root/scripts/pod-security-admission.test.sh
-readme=$repo_root/README.md
+reference=$repo_root/docs/REFERENCE.md
 
 fail() {
 	echo "FAIL: $*" >&2
@@ -16,7 +16,7 @@ fail() {
 validate_contract() {
 	workflow_file=$1
 	runtime_file=$2
-	readme_file=$3
+	reference_file=$3
 
 	[ -f "$runtime_file" ] || fail "Pod Security admission runtime is missing"
 
@@ -61,23 +61,23 @@ validate_contract() {
 		found && /^```gitignore$/ { inside = 1; next }
 		inside && /^```$/ { exit }
 		inside { print }
-	' "$readme_file")
+	' "$reference_file")
 	for scaffold_path in \
 		'scripts/pod-security-admission.test.sh' \
 		'scripts/pod-security-admission-contract.test.sh'
 	do
 		printf '%s\n' "$owned_ignore_block" | grep -Fxq -- "$scaffold_path" ||
-			fail "README ignore example lacks: $scaffold_path"
+			fail "reference ignore example lacks: $scaffold_path"
 	done
 }
 
 if [ "${1:-}" = "--validate" ]; then
-	[ "$#" -eq 4 ] || fail "usage: $0 --validate <workflow> <runtime> <readme>"
+	[ "$#" -eq 4 ] || fail "usage: $0 --validate <workflow> <runtime> <reference>"
 	validate_contract "$2" "$3" "$4"
 	exit 0
 fi
 
-validate_contract "$workflow" "$runtime" "$readme"
+validate_contract "$workflow" "$runtime" "$reference"
 
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
@@ -86,11 +86,11 @@ run_mutation() {
 	description=$1
 	workflow_mutation=$2
 	runtime_mutation=$3
-	readme_mutation=${4:-}
+	reference_mutation=${4:-}
 
 	cp "$workflow" "$mutation_dir/workflow.yaml"
 	cp "$runtime" "$mutation_dir/runtime.sh"
-	cp "$readme" "$mutation_dir/README.md"
+	cp "$reference" "$mutation_dir/REFERENCE.md"
 
 	if [ -n "$workflow_mutation" ]; then
 		yq eval "$workflow_mutation" "$mutation_dir/workflow.yaml" > "$mutation_dir/mutant.yaml"
@@ -100,12 +100,12 @@ run_mutation() {
 		sed "$runtime_mutation" "$mutation_dir/runtime.sh" > "$mutation_dir/mutant.sh"
 		mv "$mutation_dir/mutant.sh" "$mutation_dir/runtime.sh"
 	fi
-	if [ -n "$readme_mutation" ]; then
-		sed "$readme_mutation" "$mutation_dir/README.md" > "$mutation_dir/mutant.md"
-		mv "$mutation_dir/mutant.md" "$mutation_dir/README.md"
+	if [ -n "$reference_mutation" ]; then
+		sed "$reference_mutation" "$mutation_dir/REFERENCE.md" > "$mutation_dir/mutant.md"
+		mv "$mutation_dir/mutant.md" "$mutation_dir/REFERENCE.md"
 	fi
 
-	if (validate_contract "$mutation_dir/workflow.yaml" "$mutation_dir/runtime.sh" "$mutation_dir/README.md") \
+	if (validate_contract "$mutation_dir/workflow.yaml" "$mutation_dir/runtime.sh" "$mutation_dir/REFERENCE.md") \
 		>/dev/null 2>&1; then
 		fail "mutation passed: $description"
 	fi

@@ -8,7 +8,7 @@ workflow=$repo_root/.github/workflows/validate-scaffold.yaml
 runtime=$repo_root/scripts/platform-tenant-envelope.test.sh
 pod_security_runtime=$repo_root/scripts/pod-security-admission.test.sh
 rbac_runtime=$repo_root/scripts/tenant-rbac.test.sh
-readme=$repo_root/README.md
+reference=$repo_root/docs/REFERENCE.md
 template_sync_ignore=$repo_root/.templatesyncignore
 
 fail() {
@@ -21,7 +21,7 @@ validate_contract() {
 	runtime_file=$2
 	pod_security_file=$3
 	rbac_file=$4
-	readme_file=$5
+	reference_file=$5
 	ignore_file=$6
 
 	[ -f "$runtime_file" ] || fail "Platform tenant-envelope runtime is missing"
@@ -135,13 +135,13 @@ validate_contract() {
 		found && /^```gitignore$/ { inside = 1; next }
 		inside && /^```$/ { exit }
 		inside { print }
-	' "$readme_file")
+	' "$reference_file")
 	for scaffold_path in \
 		'scripts/platform-tenant-envelope.test.sh' \
 		'scripts/platform-tenant-envelope-contract.test.sh'
 	do
 		printf '%s\n' "$owned_ignore_block" | grep -Fxq -- "$scaffold_path" ||
-			fail "README ignore example lacks: $scaffold_path"
+			fail "reference ignore example lacks: $scaffold_path"
 		grep -Fxq -- "$scaffold_path" "$ignore_file" ||
 			fail ".templatesyncignore lacks: $scaffold_path"
 	done
@@ -149,7 +149,7 @@ validate_contract() {
 
 if [ "${1:-}" = "--validate" ]; then
 	[ "$#" -eq 7 ] ||
-		fail "usage: $0 --validate <workflow> <runtime> <pod-security-runtime> <rbac-runtime> <readme> <ignore>"
+		fail "usage: $0 --validate <workflow> <runtime> <pod-security-runtime> <rbac-runtime> <reference> <ignore>"
 	validate_contract "$2" "$3" "$4" "$5" "$6" "$7"
 	exit 0
 fi
@@ -159,7 +159,7 @@ validate_contract \
 	"$runtime" \
 	"$pod_security_runtime" \
 	"$rbac_runtime" \
-	"$readme" \
+	"$reference" \
 	"$template_sync_ignore"
 
 mutation_dir=$(mktemp -d)
@@ -173,14 +173,14 @@ run_mutation() {
 	runtime_mutation=$3
 	pod_security_mutation=${4:-}
 	rbac_mutation=${5:-}
-	readme_mutation=${6:-}
+	reference_mutation=${6:-}
 	ignore_mutation=${7:-}
 
 	cp "$workflow" "$mutation_dir/workflow.yaml"
 	cp "$runtime" "$mutation_dir/runtime.sh"
 	cp "$pod_security_runtime" "$mutation_dir/pod-security.sh"
 	cp "$rbac_runtime" "$mutation_dir/rbac.sh"
-	cp "$readme" "$mutation_dir/README.md"
+	cp "$reference" "$mutation_dir/REFERENCE.md"
 	cp "$template_sync_ignore" "$mutation_dir/templatesyncignore"
 
 	if [ -n "$workflow_mutation" ]; then
@@ -199,9 +199,9 @@ run_mutation() {
 		sed "$rbac_mutation" "$mutation_dir/rbac.sh" > "$mutation_dir/mutant.sh"
 		mv "$mutation_dir/mutant.sh" "$mutation_dir/rbac.sh"
 	fi
-	if [ -n "$readme_mutation" ]; then
-		sed "$readme_mutation" "$mutation_dir/README.md" > "$mutation_dir/mutant.md"
-		mv "$mutation_dir/mutant.md" "$mutation_dir/README.md"
+	if [ -n "$reference_mutation" ]; then
+		sed "$reference_mutation" "$mutation_dir/REFERENCE.md" > "$mutation_dir/mutant.md"
+		mv "$mutation_dir/mutant.md" "$mutation_dir/REFERENCE.md"
 	fi
 	if [ -n "$ignore_mutation" ]; then
 		sed "$ignore_mutation" "$mutation_dir/templatesyncignore" > "$mutation_dir/mutant.ignore"
@@ -213,7 +213,7 @@ run_mutation() {
 		"$mutation_dir/runtime.sh" \
 		"$mutation_dir/pod-security.sh" \
 		"$mutation_dir/rbac.sh" \
-		"$mutation_dir/README.md" \
+		"$mutation_dir/REFERENCE.md" \
 		"$mutation_dir/templatesyncignore") >/dev/null 2>&1; then
 		fail "mutation passed: $description"
 	fi
@@ -237,7 +237,7 @@ run_mutation "OpenBao authorization validation removed" '' \
 	'/validate_openbao_authorization/d'
 run_mutation "publisher baseline invocation removed" '' \
 	'/^[[:space:]]*validate_publish_workflow /d'
-run_mutation "README tenant-envelope runtime marker removed" '' '' '' '' \
+run_mutation "reference tenant-envelope runtime marker removed" '' '' '' '' \
 	'/^scripts\/platform-tenant-envelope\.test\.sh$/d'
 run_mutation ".templatesyncignore tenant-envelope runtime marker removed" '' '' '' '' '' \
 	'/^scripts\/platform-tenant-envelope\.test\.sh$/d'
