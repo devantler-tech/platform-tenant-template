@@ -11,9 +11,13 @@ on:
     branches: [main]
   # The admissibility job consumes live policy mains, so it must keep checking
   # even while this template has no unrelated pull-request activity. GitHub runs
-  # scheduled workflows from the latest default-branch commit.
+  # scheduled workflows from the latest default-branch commit. Daily, because a
+  # Platform policy change triggers nothing here, so this interval is how long
+  # such a change can go unnoticed (#188). A trigger on Platform's own paths
+  # would be narrower but needs cross-repository dispatch credentials; one run a
+  # day costs a few runner minutes.
   schedule:
-    - cron: "17 6 * * 1"  # weekly, Monday 06:17 UTC
+    - cron: "17 6 * * *"  # daily, 06:17 UTC
   workflow_dispatch:
 
 permissions: {}
@@ -153,8 +157,10 @@ jobs:
             '.["on"].pull_request.branches | (length == 1 and .[0] == "main")'
           assert_yaml "every merge to main must re-validate main" \
             '.["on"].push.branches | (length == 1 and .[0] == "main")'
-          assert_yaml "the live-policy drift gate must run weekly" \
-            '.["on"].schedule | (length == 1 and .[0].cron == "17 6 * * 1")'
+          # A regex, not ==: yq treats * in an == string as a wildcard, so
+          # "17 6 * * *" would also accept the weekly "17 6 * * 1".
+          assert_yaml "the live-policy drift gate must run daily" \
+            '.["on"].schedule | (length == 1 and (.[0].cron | test("^17 6 \\* \\* \\*$")))'
           assert_yaml "manual dispatch must stay covered" \
             '.["on"] | has("workflow_dispatch")'
           assert_yaml "the contract job must cover every event" \
@@ -175,10 +181,38 @@ jobs:
             '.jobs.admissibility.if == strenv(expected_if)'
           assert_yaml "admissibility must have no dependencies" \
             '.jobs.admissibility.needs == null'
-          assert_yaml "admissibility steps must be unconditional" '
-            .jobs.admissibility.steps
-            | map(select(has("if")))
-            | length == 0
+          # Setup steps keep the default condition. Every contract after the last
+          # checkout runs whatever an earlier contract concluded, so one run reports
+          # every contract that no longer holds; only the network boundary waits for
+          # the admission step, whose Kyverno CLI and policy set it reuses.
+          expected_contract_if=$(
+            printf '%s' \
+              "!cancelled()" \
+              " && steps.checkout-shared-policies.outcome == 'success'"
+          )
+          expected_boundary_if=$(
+            printf '%s' \
+              "!cancelled()" \
+              " && steps.apply-admission-policies.outcome == 'success'"
+          )
+          export expected_contract_if expected_boundary_if
+          # shellcheck disable=SC2016 # $e and $k are yq variables, not shell ones.
+          assert_yaml "each admissibility contract must report independently" '
+            .jobs.admissibility.steps | to_entries as $e
+            | ($e | map(select(.value.id == "checkout-shared-policies")) | .[0].key) as $k
+            | [
+                ($e | map(select(.value.id == "checkout-shared-policies")) | length) == 1,
+                ($e | map(select(.key <= $k and (.value | has("if")))) | length) == 0,
+                ($e | map(select(.key > $k)) | length) == 6,
+                ($e | map(select(
+                  .key > $k and .value.id != "apply-network-boundary"
+                  and .value.if != strenv(expected_contract_if)
+                )) | length) == 0,
+                ($e | map(select(
+                  .key > $k and .value.id == "apply-network-boundary"
+                  and .value.if == strenv(expected_boundary_if)
+                )) | length) == 1
+              ] | all
           '
           assert_yaml "admissibility steps must propagate errors" '
             .jobs.admissibility.steps
@@ -461,19 +495,26 @@ jobs:
             k8s/clusters/prod/bootstrap/config-map.yaml
           persist-credentials: false
       - name: 📥 Checkout shared kyverno-policies (live main)
+        id: checkout-shared-policies
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: devantler-tech/kyverno-policies
           path: .shared-policies
           persist-credentials: false
+      # Each contract below runs even when an earlier one failed, so a single run
+      # names every contract Platform has broken; the job still fails on any.
       - name: 🧭 Validate Platform tenant envelope
+        if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
         run: sh scripts/platform-tenant-envelope.test.sh
       - name: 🌐 Validate Platform network floor
+        if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
         run: sh scripts/platform-network-floor.test.sh
       - name: 📈 Validate Platform VPA floor
+        if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
         run: sh scripts/platform-vpa-floor.test.sh
       - name: 🛂 Apply admission policies to the rendered scaffold
         id: apply-admission-policies
+        if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
         run: |
           set -euo pipefail
           # Download + checksum-verify the kyverno CLI (supply-chain integrity).
@@ -675,6 +716,8 @@ jobs:
             --userinfo platform-user-info.yaml
       - name: 🌐 Apply the tenant network boundary to the rendered scaffold
         id: apply-network-boundary
+        # Reuses the admission step's Kyverno CLI, policy set and tenant context.
+        if: "!cancelled() && steps.apply-admission-policies.outcome == 'success'"
         # Platform's restrict-tenant-network-policies refuses a tenant
         # CiliumNetworkPolicy whose fromEndpoints/toEndpoints selector carries no
         # constraint. The aggregate platform set above applies it WITHOUT a namespace
@@ -790,6 +833,7 @@ jobs:
 
       - name: 🔗 Assert the spread-pods lockstep
         id: assert-spread-lockstep
+        if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
         # The platform's `spread-pods` policy injects its topology spread
         # constraint through Kyverno's ADD-IF-NOT-PRESENT anchor
         # (`+(topologySpreadConstraints)`). Because the scaffold authors its own
@@ -977,7 +1021,7 @@ jobs:
       - name: 🛡️ Exercise restricted admission and tenant RBAC
         run: sh scripts/pod-security-admission.test.sh
 
-  # The weekly schedule is the only run that re-checks live Platform policy while
+  # The daily schedule is the only run that re-checks live Platform policy while
   # this template is quiet, and nothing else reads that schedule's results, so a
   # red scheduled run could stay invisible for weeks. Mirror its outcome into one
   # tracking issue instead: a failing scheduled (or manually dispatched) run on
