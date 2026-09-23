@@ -1,41 +1,37 @@
 # platform-tenant-template
 
-A template for **GitOps tenants** on the
-[devantler-tech platform](https://github.com/devantler-tech/platform) — an
-application that runs on the platform from its own repository. The template ships
-the shared, **framework-agnostic** CI/CD plumbing (build → signed publish →
-release) and keeps it current in every tenant via
-[template-sync](https://github.com/AndreasAugustin/actions-template-sync).
+Start a new app for the
+[devantler-tech platform](https://github.com/devantler-tech/platform) from this
+template. It gives your repository the build, signing, release and deploy plumbing,
+so all you add is your app.
 
-It is intentionally **stack-neutral**: it carries no application code or
-language-specific tooling. Bring your own stack (any language, any framework) and
-fill in the scaffolding.
+The platform calls such an app a **tenant**: it lives in its own repository, and the
+platform deploys what that repository publishes. The template holds no application
+code and works with any language or framework. After you create a repository from
+it, a weekly [template-sync](https://github.com/AndreasAugustin/actions-template-sync)
+pull request keeps the shared plumbing up to date.
 
 ## Use this template
 
-1. Click **"Use this template" → Create a new repository** (or
-   `gh repo create devantler-tech/<tenant> --template devantler-tech/platform-tenant-template --private`).
-2. **Rename the placeholders** in `deploy/` to your tenant name — run
-   [`scripts/rename-placeholders.sh`](scripts/rename-placeholders.sh) (defaults to
-   the repo directory name, or pass one: `scripts/rename-placeholders.sh my-tenant`).
-   It rewrites the `app`, `REPLACE_ME`, and `replace-me` placeholders
-   consistently, including the container name, Vault role, and ServiceAccount.
-   Those values **must** equal the repo name (see the convention below). The
-   helper preserves the `app.kubernetes.io/name` label *keys*, CloudNativePG's
-   literal `-app` secret suffix, and the `openbao` SecretStore name. (Doing this
-   by hand is easy to get half-wrong.) It's a one-shot helper — delete it once
-   adopted.
-   The example route is renamed for both environments: `<tenant>.platform.lan`
-   locally and `<tenant>.platform.devantler.tech` in production. Keep both in
-   `deploy/httproute.yaml`; add any custom domains beside them. Each Platform
-   Gateway attaches only the hostnames its listener serves.
-   The route also publishes a tile to the Platform Homepage. The helper updates
-   its name, production URL, and pod selector; tailor the tile's description,
-   group, and icon annotations after the rename to describe your app.
-3. Replace the rest of the scaffolding with your app: application code,
-   `Dockerfile`, the example stack job in `ci.yaml`, and fill in `AGENTS.md`.
-4. Create `.templatesyncignore` (see below).
-5. Register the tenant on the platform — follow
+1. **Create your repository.** Click **"Use this template" → Create a new
+   repository**, or run the following, replacing `<tenant>` with your app's name:
+
+   ```sh
+   gh repo create devantler-tech/<tenant> --template devantler-tech/platform-tenant-template --private
+   gh repo clone devantler-tech/<tenant>
+   cd <tenant>
+   ```
+
+2. **Rename the placeholder app to your tenant name.** Run
+   [`scripts/rename-placeholders.sh`](scripts/rename-placeholders.sh). It uses the
+   directory name, or you can pass one: `scripts/rename-placeholders.sh my-tenant`.
+   The name must equal the repository name. [What the rename changes](#what-the-rename-changes)
+   lists everything it touches.
+3. **Replace the example with your app:** application code, `Dockerfile`, the
+   example stack job in `.github/workflows/ci.yaml`, and `AGENTS.md`.
+4. **Protect your own files from the weekly sync** by creating `.templatesyncignore`
+   from [the list below](#what-the-template-owns-vs-what-you-own).
+5. **Register the tenant on the platform.** Follow
    [`platform/docs/TENANTS.md`](https://github.com/devantler-tech/platform/blob/main/docs/TENANTS.md).
 
 Default PR CI always builds the tenant image and renders `deploy/` before merge,
@@ -44,7 +40,31 @@ in `ci-required-checks` when you replace the example job with your stack's lint,
 test, and build commands. This catches the same image and manifest failures in
 the pull request that introduced them instead of during release or reconciliation.
 
-## What the template owns vs. what you own
+Releases need no manual step: [How publishing works](#how-publishing-works)
+explains how merges to `main` become signed releases that the platform deploys.
+
+## Reference
+
+### What the rename changes
+
+`scripts/rename-placeholders.sh` rewrites the `app`, `REPLACE_ME`, and `replace-me`
+placeholders in `deploy/` consistently, including the container name, Vault role,
+and ServiceAccount. Those values **must** equal the repository name (see the
+convention under [How publishing works](#how-publishing-works)). The helper
+preserves the `app.kubernetes.io/name` label *keys*, CloudNativePG's literal `-app`
+secret suffix, and the `openbao` SecretStore name. Doing this by hand is easy to get
+half-wrong. It's a one-shot helper, so delete it once adopted.
+
+The example route is renamed for both environments: `<tenant>.platform.lan`
+locally and `<tenant>.platform.devantler.tech` in production. Keep both in
+`deploy/httproute.yaml`; add any custom domains beside them. Each Platform
+Gateway attaches only the hostnames its listener serves.
+
+The route also publishes a tile to the Platform Homepage. The helper updates
+its name, production URL, and pod selector; tailor the tile's description,
+group, and icon annotations after the rename to describe your app.
+
+### What the template owns vs. what you own
 
 template-sync overwrites the files the template **owns** and never touches the
 files **you own**. Declare the files you own in **`.templatesyncignore`** (same
@@ -122,7 +142,7 @@ tenants) but are **yours** — they carry your project-specific overview, so the
 ignored from sync. `.github/CODEOWNERS` is likewise yours: it names *your* tenant's
 code owners, so template-sync never overwrites it.
 
-## How publishing works
+### How publishing works
 
 `release.yaml` turns Conventional-Commit merges to `main` into `vX.Y.Z` tags.
 Each tag triggers `cd.yaml`, which calls the platform's
@@ -136,7 +156,7 @@ only artifacts from this trusted workflow are reconciled.
 > name — `publish-app` pins the built image digest into the container with that
 > name (`app-name: ${{ github.event.repository.name }}` in `cd.yaml`).
 
-## Validate locally
+### Validate locally
 
 ```sh
 kubectl kustomize deploy/                              # manifests build
