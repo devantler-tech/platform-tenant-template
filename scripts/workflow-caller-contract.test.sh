@@ -79,10 +79,11 @@ validate_contract() {
 	# and therefore cannot deliver this invariant — asserting it would enforce a guarantee it does
 	# not make. The config still declares one because it helps when advisories coincide. A PARTIAL
 	# advisory bump is handled by a MANUAL escalation, not by anything here: this test deliberately
-	# does not assert that path, and no workflow implements it, so the remedy is a separately opened
-	# pull request moving all three callers to one reviewed SHA. The bot's PR is never adapted —
-	# AGENTS.md makes Dependabot-authored PRs AUTOMATION-OWNED (NO-ACTION). The escalation's trigger,
-	# actor and action are written out in `.github/dependabot.yml` beside the group itself.
+	# does not assert that path, and no workflow implements it, so the remedy is an engineer adapting
+	# the partial pull request — behind a draft fence and a fresh exact-head review, as AGENTS.md
+	# prescribes for a bot PR that cannot finish on its own — to move all three callers to one
+	# reviewed SHA. The escalation's trigger, actor and action are written out in
+	# `.github/dependabot.yml` beside the group itself.
 	#
 	# `exclude-patterns` is rejected outright rather than pattern-matched. GitHub applies it AFTER
 	# `patterns`, so a group carrying both an inclusion covering these callers and an exclusion
