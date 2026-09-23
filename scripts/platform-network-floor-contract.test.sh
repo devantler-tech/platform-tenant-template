@@ -112,6 +112,12 @@ validate_contract() {
 		fail "Deployment mutation control is not invoked exactly once"
 	[ "$(grep -Ec '^run_http_route_mutation "' "$runtime_file")" -eq 8 ] ||
 		fail "HTTPRoute mutation controls are not invoked exactly eight times"
+	# A null lookup and a false verdict need opposite responses, so every
+	# assertion routes through assert_yq and both causes stay driven.
+	! grep -Fq 'yq eval -e' "$runtime_file" ||
+		fail "a network-floor assertion bypasses assert_yq, so a null lookup would print a policy verdict"
+	[ "$(grep -Ec '^check_failure_cause "' "$runtime_file")" -eq 2 ] ||
+		fail "failure-cause controls are not invoked exactly twice"
 
 	owned_ignore_block=$(awk '
 		/^\*\*Yours \(list these in `\.templatesyncignore`\):\*\*$/ { found = 1; next }
@@ -214,6 +220,9 @@ run_mutation "rendered scaffold validation removed" '' '/kubectl kustomize/d'
 run_mutation "live Platform route-domain validation removed" '' \
 	"/^validate_platform_route_hostnames \"\$platform_root\" \"\$http_route\"$/d"
 run_mutation "route-domain mutation controls removed" '' '/run_hostname_mutation/d'
+run_mutation "assertion bypasses the failure-cause split" '' \
+	's/assert_yq "Platform generated DNS allowance/yq eval -e "Platform generated DNS allowance/'
+run_mutation "failure-cause controls removed" '' '/^check_failure_cause "/d'
 run_mutation "Service mutation control invocations removed" '' '/^run_service_mutation "/d'
 run_mutation "Deployment mutation control invocation removed" '' '/^run_deployment_mutation "/d'
 run_mutation "HTTPRoute mutation control invocations removed" '' '/^run_http_route_mutation "/d'

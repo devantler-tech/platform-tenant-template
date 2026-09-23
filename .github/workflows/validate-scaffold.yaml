@@ -86,6 +86,29 @@ jobs:
               "github.repository == 'devantler-tech/platform-tenant-template'"
           )
           export expected_if
+          # The drift reporter's conditions are pinned exactly: a widened job
+          # condition would let non-scheduled runs open or close the issue, and a
+          # flipped step condition would stop failures ever being reported.
+          expected_report_if=$(
+            printf '%s' \
+              "!cancelled()" \
+              " && github.repository == 'devantler-tech/platform-tenant-template'" \
+              " && github.ref == 'refs/heads/main'" \
+              " && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
+          )
+          expected_report_failure_if=$(
+            printf '%s' \
+              "needs.validate-scaffold.result != 'success'" \
+              " || needs.admissibility.result != 'success'" \
+              " || needs.pod-security-admission.result != 'success'"
+          )
+          expected_report_success_if=$(
+            printf '%s' \
+              "needs.validate-scaffold.result == 'success'" \
+              " && needs.admissibility.result == 'success'" \
+              " && needs.pod-security-admission.result == 'success'"
+          )
+          export expected_report_if expected_report_failure_if expected_report_success_if
           assert_yaml() {
             description=$1
             expression=$2
@@ -183,6 +206,26 @@ jobs:
           '
           assert_yaml "admissibility must fail closed" \
             '.jobs.admissibility | has("continue-on-error") | not'
+          assert_yaml "scheduled failures must be surfaced as a tracking issue" '
+            .jobs."report-scheduled-drift" | [
+              (.needs | length) == 3,
+              (.needs | contains(["admissibility", "pod-security-admission", "validate-scaffold"])),
+              .if == strenv(expected_report_if),
+              (.permissions | keys | length) == 1,
+              .permissions.issues == "write",
+              (has("continue-on-error") | not),
+              ([.steps[] | select((.uses // "") | test("^devantler-tech/actions/upsert-issue@[0-9a-f]{40}$"))] | length) == 2,
+              ([.steps[] | select(.with.open == "false")] | length) == 1,
+              ([.steps[] | select(
+                (.if // "") == strenv(expected_report_failure_if)
+                and ((.with.open // "true") == "true")
+              )] | length) == 1,
+              ([.steps[] | select(
+                (.if // "") == strenv(expected_report_success_if)
+                and .with.open == "false"
+              )] | length) == 1
+            ] | all
+          '
           assert_yaml "tenant SecretStore admission must stay context- and mutation-proved" \
             "${secretstore_contract}"
 
@@ -933,3 +976,48 @@ jobs:
         run: GOTOOLCHAIN=local go install "sigs.k8s.io/kind@${KIND_VERSION}"
       - name: 🛡️ Exercise restricted admission and tenant RBAC
         run: sh scripts/pod-security-admission.test.sh
+
+  # The weekly schedule is the only run that re-checks live Platform policy while
+  # this template is quiet, and nothing else reads that schedule's results, so a
+  # red scheduled run could stay invisible for weeks. Mirror its outcome into one
+  # tracking issue instead: a failing scheduled (or manually dispatched) run on
+  # main opens or updates it, and the next passing one closes it. Pull-request and
+  # push runs never touch it — their results already show on the change itself.
+  report-scheduled-drift:
+    name: Report scheduled drift
+    needs: [validate-scaffold, admissibility, pod-security-admission]
+    if: >-
+      !cancelled()
+      && github.repository == 'devantler-tech/platform-tenant-template'
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write # open, update, or close the drift tracking issue
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: 📣 Open or update the drift issue
+        if: needs.validate-scaffold.result != 'success' || needs.admissibility.result != 'success' || needs.pod-security-admission.result != 'success'
+        uses: devantler-tech/actions/upsert-issue@7a19c1d0f32e5a99a38d0a4106f1b2cbd76c99e4 # v13.6.7
+        with:
+          title: "Scheduled scaffold validation is failing on main"
+          body: |
+            The `🧱 Validate Scaffold` run below failed on `main` outside a pull request. The schedule is what re-checks this template against live Platform and shared Kyverno policy, so a failure here usually means that policy changed and the scaffold no longer matches it.
+
+            - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            - Validate Scaffold: `${{ needs.validate-scaffold.result }}`
+            - Platform Admissibility: `${{ needs.admissibility.result }}`
+            - Pod Security and tenant RBAC: `${{ needs.pod-security-admission.result }}`
+
+            Read the failing step's message first: a check that could not evaluate its input names that as its cause, separately from a policy verdict. This issue is updated by every failing scheduled run and closed by the next passing one.
+      - name: ✅ Close the drift issue
+        if: needs.validate-scaffold.result == 'success' && needs.admissibility.result == 'success' && needs.pod-security-admission.result == 'success'
+        uses: devantler-tech/actions/upsert-issue@7a19c1d0f32e5a99a38d0a4106f1b2cbd76c99e4 # v13.6.7
+        with:
+          title: "Scheduled scaffold validation is failing on main"
+          open: "false"
+          body: "Scheduled scaffold validation passes on main."
+          close-comment: "✅ ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} passed on `main`, so scheduled scaffold validation is green again. Closing."
