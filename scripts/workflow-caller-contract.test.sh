@@ -162,8 +162,8 @@ validate_contract() {
 	grep -Fq 'sh scripts/workflow-caller-contract.test.sh' "$reference_file" ||
 		fail 'reference local validation lacks the workflow-caller contract'
 
-	# Tenants run the publish-pin check and its test in their required CI, so both must keep
-	# reaching tenants through template sync and be documented as template-owned.
+	# Tenants that wire the publish-pin check into their required CI run its test there too, so both
+	# must keep reaching tenants through template sync and be documented as template-owned.
 	owned_table=$(awk '
 		/^\*\*Owned by the template / { found = 1; next }
 		found && /^\*\*/ { exit }
@@ -172,7 +172,7 @@ validate_contract() {
 	[ -n "$owned_table" ] || fail 'reference lacks the template-owned table'
 	for tenant_run in scripts/publish-pin-approved.sh scripts/publish-pin-approved.test.sh; do
 		if tenant_ignored "$ignore_file" "$tenant_run"; then
-			fail "$tenant_run runs in tenant required CI and must not be tenant-ignored"
+			fail "tenants run $tenant_run in their CI, so it must not be tenant-ignored"
 		fi
 		printf '%s\n' "$owned_table" | grep -Fq "\`$tenant_run\`" ||
 			fail "reference template-owned table lacks $tenant_run"
