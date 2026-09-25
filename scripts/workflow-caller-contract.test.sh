@@ -138,6 +138,16 @@ validate_contract() {
 		fail 'reference ownership table lacks the workflow-caller contract'
 	grep -Fq 'sh scripts/workflow-caller-contract.test.sh' "$reference_file" ||
 		fail 'reference local validation lacks the workflow-caller contract'
+
+	# Tenants run the publish-pin check and its test in their required CI, so both must keep
+	# reaching tenants through template sync.
+	for tenant_run in scripts/publish-pin-approved.sh scripts/publish-pin-approved.test.sh; do
+		if grep -Fqx -- "$tenant_run" "$ignore_file"; then
+			fail "$tenant_run runs in tenant required CI and must not be tenant-ignored"
+		fi
+		grep -Fq "\`$tenant_run\`" "$reference_file" ||
+			fail "reference ownership table lacks $tenant_run"
+	done
 }
 
 if [ "${1:-}" = "--validate" ]; then
@@ -232,6 +242,14 @@ run_mutation 'reference local validation marker removed' reference \
 	'/sh scripts\/workflow-caller-contract\.test\.sh/d'
 run_mutation 'actual ownership marker removed' ignore \
 	'/^scripts\/workflow-caller-contract\.test\.sh$/d'
+run_mutation 'tenant-run publish-pin test tenant-ignored' ignore \
+	'$a\
+scripts/publish-pin-approved.test.sh'
+run_mutation 'tenant-run publish-pin check tenant-ignored' ignore \
+	'$a\
+scripts/publish-pin-approved.sh'
+run_mutation 'reference ownership row for the publish-pin test removed' reference \
+	"/\`scripts\/publish-pin-approved\.test\.sh\`/d"
 run_mutation 'dependabot group for the devantler-tech callers removed' dependabot \
 	'del(.updates[] | select(."package-ecosystem" == "github-actions") | .groups)'
 run_mutation 'dependabot group narrowed so it no longer covers the devantler-tech callers' dependabot \
