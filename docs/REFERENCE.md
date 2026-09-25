@@ -42,6 +42,7 @@ app code.
 | `CLAUDE.md` | `@AGENTS.md` shim |
 | `docs/REFERENCE.md` | This reference |
 | `scripts/workflow-caller-pin-contract.test.sh` | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
+| `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` | The check a tenant's required CI runs to refuse a moved `publish-app.yaml` pin until the platform's approved set lists it for that tenant, so a dependency PR waits instead of shipping a release the platform cannot deploy. Tenants wire it into their own `ci.yaml`; the default one a new tenant starts from does not run it ([#207](https://github.com/devantler-tech/platform-tenant-template/issues/207)) |
 | `zizmor.yml` | GitHub Actions pinning policy enforced by the security scan |
 
 **Scaffold-time only (arrives when the repo is created — never re-synced, so a
@@ -125,6 +126,7 @@ kubectl kustomize deploy/                              # manifests build
 sh scripts/rename-placeholders.test.sh                # onboarding contract
 sh scripts/agent-instructions.test.sh                 # agent safety contract
 sh scripts/workflow-caller-pin-contract.test.sh       # portable tenant caller-pin contract (resolves the version-comment tag on github.com and compares it with the pinned commit)
+sh scripts/publish-pin-approved.test.sh               # publish-app pin approval check (reads a local approved set, never the network)
 sh scripts/workflow-caller-contract.test.sh           # template-only caller/scaffold contract
 sh scripts/tenant-ci-contract.test.sh                 # tenant delivery-input CI contract
 sh scripts/pod-security-admission-contract.test.sh    # Pod Security workflow contract
