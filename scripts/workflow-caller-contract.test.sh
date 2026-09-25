@@ -19,6 +19,29 @@ fail() {
 	exit 1
 }
 
+# A repository of its own, so only the ignore file under test applies when tenant_ignored asks git.
+ignore_probe=$(mktemp -d)
+mutation_dir=
+trap 'rm -rf "$ignore_probe" ${mutation_dir:+"$mutation_dir"}' EXIT
+git init -q --template= "$ignore_probe" ||
+	fail 'cannot create the repository that evaluates .templatesyncignore'
+
+# tenant_ignored succeeds when <ignore-file> makes template sync skip <path>, read with .gitignore rules
+# (wildcards and negation included) as the file's header documents.
+tenant_ignored() {
+	case "$1" in
+	/*) rules=$1 ;;
+	*) rules=$PWD/$1 ;;
+	esac
+	status=0
+	git -C "$ignore_probe" -c core.excludesFile="$rules" check-ignore --no-index -q -- "$2" || status=$?
+	case "$status" in
+	0) return 0 ;;
+	1) return 1 ;;
+	*) fail "cannot evaluate $1 for $2" ;;
+	esac
+}
+
 [ -f "$portable_contract" ] ||
 	fail 'the portable workflow-caller pin contract is missing'
 grep -Fqx 'scripts/workflow-caller-contract.test.sh' "$template_sync_ignore" ||
@@ -140,13 +163,19 @@ validate_contract() {
 		fail 'reference local validation lacks the workflow-caller contract'
 
 	# Tenants run the publish-pin check and its test in their required CI, so both must keep
-	# reaching tenants through template sync.
+	# reaching tenants through template sync and be documented as template-owned.
+	owned_table=$(awk '
+		/^\*\*Owned by the template / { found = 1; next }
+		found && /^\*\*/ { exit }
+		found { print }
+	' "$reference_file")
+	[ -n "$owned_table" ] || fail 'reference lacks the template-owned table'
 	for tenant_run in scripts/publish-pin-approved.sh scripts/publish-pin-approved.test.sh; do
-		if grep -Fqx -- "$tenant_run" "$ignore_file"; then
+		if tenant_ignored "$ignore_file" "$tenant_run"; then
 			fail "$tenant_run runs in tenant required CI and must not be tenant-ignored"
 		fi
-		grep -Fq "\`$tenant_run\`" "$reference_file" ||
-			fail "reference ownership table lacks $tenant_run"
+		printf '%s\n' "$owned_table" | grep -Fq "\`$tenant_run\`" ||
+			fail "reference template-owned table lacks $tenant_run"
 	done
 }
 
@@ -167,7 +196,6 @@ validate_contract \
 	"$dependabot_config"
 
 mutation_dir=$(mktemp -d)
-trap 'rm -rf "$mutation_dir"' EXIT
 mutations_run=0
 
 run_mutation() {
@@ -250,6 +278,15 @@ run_mutation 'tenant-run publish-pin check tenant-ignored' ignore \
 scripts/publish-pin-approved.sh'
 run_mutation 'reference ownership row for the publish-pin test removed' reference \
 	"/\`scripts\/publish-pin-approved\.test\.sh\`/d"
+run_mutation 'publish-pin files tenant-ignored by a wildcard' ignore \
+	'$a\
+scripts/publish-pin-approved*'
+run_mutation 'publish-pin row moved to the scaffold-time table' reference \
+	'/^| `scripts\/publish-pin-approved\.sh`/{
+h
+d
+}
+/^| `scripts\/agent-instructions\.test\.sh`/G'
 run_mutation 'dependabot group for the devantler-tech callers removed' dependabot \
 	'del(.updates[] | select(."package-ecosystem" == "github-actions") | .groups)'
 run_mutation 'dependabot group narrowed so it no longer covers the devantler-tech callers' dependabot \
