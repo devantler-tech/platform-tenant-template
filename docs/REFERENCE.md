@@ -13,16 +13,19 @@ convention under [How publishing works](#how-publishing-works)). The helper
 preserves the `app.kubernetes.io/name` label *keys*, CloudNativePG's literal `-app`
 secret suffix, and the `openbao` SecretStore name. Doing this by hand is easy to get
 half-wrong. It's a one-shot helper, so delete it once adopted.
+
 The example route is renamed for both environments: `<tenant>.platform.lan`
 locally and `<tenant>.platform.devantler.tech` in production, both in
 `deploy/httproute.yaml`. Add any custom domains beside them; a tenant that moves
 to its own canonical domain may drop the `platform.devantler.tech` hostname. Each
 Platform Gateway attaches only the hostnames its listener serves.
-Gateway attaches only the hostnames its listener serves.
 
 The route also publishes a tile to the Platform Homepage. The helper updates
 its name, production URL, and pod selector; tailor the tile's description,
-group, and icon annotations after the rename to describe your app.
+group, and icon annotations after the rename to describe your app. If you drop
+the `platform.devantler.tech` hostname, point the tile's `gethomepage.dev/href`
+annotation at your canonical domain too, or the tile links to an address the
+route no longer serves.
 
 ## What the template owns vs. what you own
 
@@ -119,7 +122,7 @@ only artifacts from this trusted workflow are reconciled.
 
 ## Validate locally
 
-Run these from the repository root. In every tenant:
+Run these from the repository root. In every tenant, and in this template:
 
 ```sh
 kubectl kustomize deploy/                              # manifests build
@@ -128,9 +131,9 @@ sh scripts/publish-pin-approved.test.sh               # publish-app pin approval
 actionlint .github/workflows/*                         # workflows parse
 ```
 
-In this template repository. A new tenant starts with these scaffold-time
-scripts, but template sync never updates them, so a tenant that keeps them runs
-them against stale copies; live tenants delete and ignore them:
+Additionally, in this template repository. A new tenant starts with these
+scaffold-time scripts, but template sync never updates them, so a tenant that
+keeps them runs them against stale copies; live tenants delete and ignore them:
 
 ```sh
 sh scripts/rename-placeholders.test.sh                # onboarding contract
