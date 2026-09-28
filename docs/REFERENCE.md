@@ -15,13 +15,17 @@ secret suffix, and the `openbao` SecretStore name. Doing this by hand is easy to
 half-wrong. It's a one-shot helper, so delete it once adopted.
 
 The example route is renamed for both environments: `<tenant>.platform.lan`
-locally and `<tenant>.platform.devantler.tech` in production. Keep both in
-`deploy/httproute.yaml`; add any custom domains beside them. Each Platform
-Gateway attaches only the hostnames its listener serves.
+locally and `<tenant>.platform.devantler.tech` in production, both in
+`deploy/httproute.yaml`. Add any custom domains beside them; a tenant that moves
+to its own canonical domain may drop the `platform.devantler.tech` hostname. Each
+Platform Gateway attaches only the hostnames its listener serves.
 
 The route also publishes a tile to the Platform Homepage. The helper updates
 its name, production URL, and pod selector; tailor the tile's description,
-group, and icon annotations after the rename to describe your app.
+group, and icon annotations after the rename to describe your app. If you drop
+the `platform.devantler.tech` hostname, point the tile's `gethomepage.dev/href`
+annotation at your canonical domain too, or the tile links to an address the
+route no longer serves.
 
 ## What the template owns vs. what you own
 
@@ -38,7 +42,6 @@ app code.
 | `.github/workflows/cd.yaml` | On a `v*` tag, calls `publish-app.yaml` to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact |
 | `.github/workflows/release.yaml` | semantic-release on `main` (cuts the `v*` tags that drive `cd.yaml`) |
 | `.github/workflows/template-sync.yaml` | Opens the weekly template-sync PR |
-| `.github/workflows/sync-labels.yaml` | Syncs the repo's issue/PR labels from the canonical label set |
 | `CLAUDE.md` | `@AGENTS.md` shim |
 | `docs/REFERENCE.md` | This reference |
 | `scripts/workflow-caller-pin-contract.test.sh` | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
@@ -119,14 +122,22 @@ only artifacts from this trusted workflow are reconciled.
 
 ## Validate locally
 
-Run these from the repository root:
+Run these from the repository root. In every tenant, and in this template:
 
 ```sh
 kubectl kustomize deploy/                              # manifests build
-sh scripts/rename-placeholders.test.sh                # onboarding contract
-sh scripts/agent-instructions.test.sh                 # agent safety contract
 sh scripts/workflow-caller-pin-contract.test.sh       # portable tenant caller-pin contract (resolves the version-comment tag on github.com and compares it with the pinned commit)
 sh scripts/publish-pin-approved.test.sh               # publish-app pin approval check (reads a local approved set, never the network)
+actionlint .github/workflows/*                         # workflows parse
+```
+
+Additionally, in this template repository. A new tenant starts with these
+scaffold-time scripts, but template sync never updates them, so a tenant that
+keeps them runs them against stale copies; live tenants delete and ignore them:
+
+```sh
+sh scripts/rename-placeholders.test.sh                # onboarding contract
+sh scripts/agent-instructions.test.sh                 # agent safety contract
 sh scripts/workflow-caller-contract.test.sh           # template-only caller/scaffold contract
 sh scripts/tenant-ci-contract.test.sh                 # tenant delivery-input CI contract
 sh scripts/pod-security-admission-contract.test.sh    # Pod Security workflow contract
@@ -134,5 +145,4 @@ sh scripts/tenant-rbac-contract.test.sh               # Platform tenant RBAC wor
 sh scripts/platform-tenant-envelope-contract.test.sh  # live Platform tenant-envelope contract
 sh scripts/platform-network-floor-contract.test.sh    # generated Platform network-floor contract
 sh scripts/platform-vpa-floor-contract.test.sh        # generated Platform VPA-floor contract
-actionlint .github/workflows/*                         # workflows parse
 ```

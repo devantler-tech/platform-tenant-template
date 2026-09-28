@@ -11,7 +11,7 @@
 # Everything NOT listed here is TEMPLATE-OWNED shared plumbing kept current in
 # every tenant by template-sync — change those upstream in
 # devantler-tech/platform-tenant-template, never by editing them in a tenant.
-# Template-owned files: .github/workflows/{cd,release,template-sync,sync-labels}.yaml,
+# Template-owned files: .github/workflows/{cd,release,template-sync}.yaml,
 # scripts/workflow-caller-pin-contract.test.sh, scripts/publish-pin-approved.sh (+ its test), CLAUDE.md,
 # docs/REFERENCE.md, zizmor.yml.
 
