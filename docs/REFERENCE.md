@@ -128,8 +128,9 @@ sh scripts/publish-pin-approved.test.sh               # publish-app pin approval
 actionlint .github/workflows/*                         # workflows parse
 ```
 
-In this template repository only — the scaffold-time scripts below are not synced,
-so a tenant does not have them:
+In this template repository. A new tenant starts with these scaffold-time
+scripts, but template sync never updates them, so a tenant that keeps them runs
+them against stale copies; live tenants delete and ignore them:
 
 ```sh
 sh scripts/rename-placeholders.test.sh                # onboarding contract
