@@ -39,6 +39,9 @@ using no secrets or write authority. Keep the `delivery-inputs` job and its entr
 in `ci-required-checks` when you replace the example job with your stack's lint,
 test, and build commands. This catches the same image and manifest failures in
 the pull request that introduced them instead of during release or reconciliation.
+Keep the `publish-pin-approved` job and its entry too: it holds back a dependency
+update that moves the publishing workflow to a revision the platform has not yet
+approved for your tenant, so the release it would cut does not fail to deploy.
 
 Releases need no manual step: [How publishing works](docs/REFERENCE.md#how-publishing-works)
 explains how merges to `main` become signed releases that the platform deploys.

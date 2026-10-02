@@ -435,8 +435,8 @@ jobs:
       - name: 📈 Validate Platform VPA-floor contract
         run: sh scripts/platform-vpa-floor-contract.test.sh
       - name: 📦 Validate the publish-app pin approval check
-        # The script is template-owned and synced to every tenant; each tenant wires it into
-        # its own required CI separately. Its tests stay here.
+        # The script is template-owned and synced to every tenant; the default ci.yaml runs
+        # it (#207). Its tests also run here.
         run: sh scripts/publish-pin-approved.test.sh
 
   # Platform admissibility gate (#71, epic #6 theme 4): the scaffold's promise is
