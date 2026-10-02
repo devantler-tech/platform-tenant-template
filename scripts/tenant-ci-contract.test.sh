@@ -188,7 +188,9 @@ validate_contract() {
 		(.jobs."publish-pin-approved".steps[3] | keys | sort | join(",")) == "env,if,name,run"
 		and .jobs."publish-pin-approved".steps[3].if == "github.repository != '\''devantler-tech/platform-tenant-template'\''"
 		and .jobs."publish-pin-approved".steps[3].env.BASE_SHA == "${{ github.event.pull_request.base.sha }}"
-		and (.jobs."publish-pin-approved".steps[3].run | contains("git show \"${BASE_SHA}:scripts/publish-pin-approved.sh\""))
+		and (.jobs."publish-pin-approved".steps[3].run | contains("if [ -z \"${BASE_SHA}\" ]; then"))
+		and (.jobs."publish-pin-approved".steps[3].run | contains("git show \"${BASE_SHA}:scripts/publish-pin-approved.sh\" >\"${RUNNER_TEMP}/publish-pin-approved.sh\""))
+		and (.jobs."publish-pin-approved".steps[3].run | contains("git show \"${BASE_SHA}:.github/workflows/cd.yaml\" >\"${RUNNER_TEMP}/base-cd.yaml\""))
 		and (.jobs."publish-pin-approved".steps[3].run | contains("sh \"${RUNNER_TEMP}/publish-pin-approved.sh\" \"${RUNNER_TEMP}/base-cd.yaml\" .github/workflows/cd.yaml"))
 	'
 	assert_ci "publish-pin steps must fail closed" '
@@ -356,6 +358,11 @@ run_mutation "publish-pin check skipped in a tenant" \
 	'.jobs."publish-pin-approved".steps[3].if = "github.repository == '\''devantler-tech/platform-tenant-template'\''"'
 run_mutation "publish-pin check judged by the head copy" \
 	'.jobs."publish-pin-approved".steps[3].run = "sh scripts/publish-pin-approved.sh base.yaml .github/workflows/cd.yaml"'
+# shellcheck disable=SC2016
+run_mutation "publish-pin base cd.yaml read from the head" \
+	'.jobs."publish-pin-approved".steps[3].run |= sub("git show \"\$\{BASE_SHA\}:.github/workflows/cd.yaml\"", "cat .github/workflows/cd.yaml")'
+run_mutation "publish-pin empty-base guard removed" \
+	'.jobs."publish-pin-approved".steps[3].run |= sub("if \[ -z ", "if false && [ -z ")'
 run_mutation "publish-pin check allowed to fail" \
 	'.jobs."publish-pin-approved".steps[3]."continue-on-error" = true'
 run_mutation "publish-pin job made conditional" \
@@ -399,4 +406,4 @@ run_mutation "contract ignore removed" '' '' '' '' \
 run_mutation "reference local validation command removed" '' '' '' '' '' \
 	'/sh scripts\/tenant-ci-contract.test.sh/d'
 
-echo "PASS: tenant CI contract (happy path + 48 safety mutations)"
+echo "PASS: tenant CI contract (happy path + 50 safety mutations)"
