@@ -60,10 +60,48 @@ jobs:
         shell: bash
         working-directory: .
 
+  # A dependency PR that moves the publish-app.yaml pin to a revision the platform has not approved
+  # for this tenant would ship a release the platform refuses to deploy, so this job fails the move
+  # here instead. An unchanged pin passes without contacting the platform. The template repository
+  # itself is not a registered tenant, so it runs the check's tests but skips the check.
+  publish-pin-approved:
+    name: Publish pin approved
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: 🧪 Test the publish pin check
+        run: sh scripts/publish-pin-approved.test.sh
+      - name: 📌 Refuse an unapproved publish-app pin
+        if: github.repository != 'devantler-tech/platform-tenant-template'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # An empty base would turn `git show ":path"` into an index read, comparing the head with
+          # itself and passing without checking anything.
+          if [ -z "${BASE_SHA}" ]; then
+            echo "::error::No base commit to compare the publish-app pin against."
+            exit 1
+          fi
+          # Run the check as it exists on the base branch: a PR must not be able to weaken the check
+          # that judges it.
+          git show "${BASE_SHA}:scripts/publish-pin-approved.sh" >"${RUNNER_TEMP}/publish-pin-approved.sh"
+          git show "${BASE_SHA}:.github/workflows/cd.yaml" >"${RUNNER_TEMP}/base-cd.yaml"
+          sh "${RUNNER_TEMP}/publish-pin-approved.sh" "${RUNNER_TEMP}/base-cd.yaml" .github/workflows/cd.yaml
+
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [workflow-caller-pins, example, delivery-inputs]
+    needs: [workflow-caller-pins, example, delivery-inputs, publish-pin-approved]
     permissions: {}
     if: ${{ always() }}
     steps:
@@ -74,9 +112,10 @@ jobs:
             ${{ needs.example.result }}
             ${{ needs.delivery-inputs.result }}
             ${{ needs.workflow-caller-pins.result }}
+            ${{ needs.publish-pin-approved.result }}
       # aggregate-job-checks deliberately tolerates skipped dependencies. A
       # stable required check must fail unless every named tenant job ran.
       - name: Reject incomplete CI jobs
-        if: ${{ needs.workflow-caller-pins.result != 'success' || needs.example.result != 'success' || needs.delivery-inputs.result != 'success' }}
+        if: ${{ needs.workflow-caller-pins.result != 'success' || needs.example.result != 'success' || needs.delivery-inputs.result != 'success' || needs.publish-pin-approved.result != 'success' }}
         run: exit 1
         shell: bash

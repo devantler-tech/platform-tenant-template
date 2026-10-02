@@ -126,8 +126,8 @@ validate_contract() {
 			(.run // "") == "kubectl kustomize deploy/ >/dev/null"
 		)] | length == 1
 	'
-	assert_ci "required-check aggregate must depend on all three jobs exactly" \
-		'(.jobs."ci-required-checks".needs | join(",")) == "workflow-caller-pins,example,delivery-inputs"'
+	assert_ci "required-check aggregate must depend on all four jobs exactly" \
+		'(.jobs."ci-required-checks".needs | join(",")) == "workflow-caller-pins,example,delivery-inputs,publish-pin-approved"'
 	# shellcheck disable=SC2016
 	assert_ci "required-check aggregate must run after every result" \
 		'.jobs."ci-required-checks".if == "${{ always() }}"'
@@ -145,7 +145,7 @@ validate_contract() {
 	assert_ci "required-check aggregate must reject non-success results" '
 		[.jobs."ci-required-checks".steps[] | select(
 			.name == "Reject incomplete CI jobs"
-			and .if == "${{ needs.workflow-caller-pins.result != '\''success'\'' || needs.example.result != '\''success'\'' || needs.delivery-inputs.result != '\''success'\'' }}"
+			and .if == "${{ needs.workflow-caller-pins.result != '\''success'\'' || needs.example.result != '\''success'\'' || needs.delivery-inputs.result != '\''success'\'' || needs.publish-pin-approved.result != '\''success'\'' }}"
 			and .run == "exit 1"
 			and .shell == "bash"
 			and ((keys | sort | join(",")) == "if,name,run,shell")
@@ -155,10 +155,44 @@ validate_contract() {
 	assert_ci "required-check aggregate must consume the exact results" '
 		[.jobs."ci-required-checks".steps[] | select(
 			(.uses | test("^devantler-tech/actions/aggregate-job-checks@[0-9a-f]{40}$"))
-			and .with."job-results" == "${{ needs.example.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }}"
+			and .with."job-results" == "${{ needs.example.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }} ${{ needs.publish-pin-approved.result }}"
 			and ((keys | sort | join(",")) == "name,uses,with")
 			and ((.with | keys | sort | join(",")) == "job-results")
 		)] | length == 1
+	'
+
+	# The publish-pin approval gate (#207): a new tenant inherits it without editing ci.yaml.
+	assert_ci "publish-pin job must retain its stable identity" \
+		'.jobs."publish-pin-approved".name == "Publish pin approved"'
+	assert_ci "publish-pin job must have only audited keys" \
+		'(.jobs."publish-pin-approved" | keys | sort | join(",")) == "name,permissions,runs-on,steps"'
+	assert_ci "publish-pin job must have contents-read only" \
+		'(.jobs."publish-pin-approved".permissions | length) == 1 and .jobs."publish-pin-approved".permissions.contents == "read"'
+	assert_ci "publish-pin job must contain exactly the audited steps" \
+		'(.jobs."publish-pin-approved".steps | length) == 4'
+	assert_ci "publish-pin job must not reference repository secrets" '
+		(.jobs."publish-pin-approved" | to_json | contains("secrets") | not)
+	'
+	assert_ci "publish-pin checkout must be pinned, credential-free and carry the base commit" '
+		(.jobs."publish-pin-approved".steps[1].uses | test("^actions/checkout@[0-9a-f]{40}$"))
+		and .jobs."publish-pin-approved".steps[1].with."persist-credentials" == false
+		and .jobs."publish-pin-approved".steps[1].with."fetch-depth" == 0
+	'
+	assert_ci "publish-pin job must test the check unconditionally" '
+		.jobs."publish-pin-approved".steps[2].run == "sh scripts/publish-pin-approved.test.sh"
+		and ((.jobs."publish-pin-approved".steps[2] | keys | sort | join(",")) == "name,run")
+	'
+	# The check is skipped only in the template repository, which is not a registered tenant.
+	# shellcheck disable=SC2016
+	assert_ci "publish-pin check must run the base branch copy in every tenant" '
+		(.jobs."publish-pin-approved".steps[3] | keys | sort | join(",")) == "env,if,name,run"
+		and .jobs."publish-pin-approved".steps[3].if == "github.repository != '\''devantler-tech/platform-tenant-template'\''"
+		and .jobs."publish-pin-approved".steps[3].env.BASE_SHA == "${{ github.event.pull_request.base.sha }}"
+		and (.jobs."publish-pin-approved".steps[3].run | contains("git show \"${BASE_SHA}:scripts/publish-pin-approved.sh\""))
+		and (.jobs."publish-pin-approved".steps[3].run | contains("sh \"${RUNNER_TEMP}/publish-pin-approved.sh\" \"${RUNNER_TEMP}/base-cd.yaml\" .github/workflows/cd.yaml"))
+	'
+	assert_ci "publish-pin steps must fail closed" '
+		[.jobs."publish-pin-approved".steps[] | select(has("continue-on-error"))] | length == 0
 	'
 
 	# shellcheck disable=SC2016
@@ -307,7 +341,31 @@ run_mutation "delivery dependency removed from aggregate" \
 run_mutation "delivery dependency replaced with duplicate" \
 	'.jobs."ci-required-checks".needs = ["example", "example"]'
 run_mutation "workflow caller pin dependency removed from aggregate" \
-	'.jobs."ci-required-checks".needs = ["example", "delivery-inputs"]'
+	'.jobs."ci-required-checks".needs = ["example", "delivery-inputs", "publish-pin-approved"]'
+run_mutation "publish-pin dependency removed from aggregate" \
+	'.jobs."ci-required-checks".needs = ["workflow-caller-pins", "example", "delivery-inputs"]'
+run_mutation "publish-pin job removed" \
+	'del(.jobs."publish-pin-approved")'
+run_mutation "publish-pin check step removed" \
+	'del(.jobs."publish-pin-approved".steps[3])'
+run_mutation "publish-pin check tests removed" \
+	'del(.jobs."publish-pin-approved".steps[2])'
+run_mutation "publish-pin check skipped in every repository" \
+	'.jobs."publish-pin-approved".steps[3].if = "false"'
+run_mutation "publish-pin check skipped in a tenant" \
+	'.jobs."publish-pin-approved".steps[3].if = "github.repository == '\''devantler-tech/platform-tenant-template'\''"'
+run_mutation "publish-pin check judged by the head copy" \
+	'.jobs."publish-pin-approved".steps[3].run = "sh scripts/publish-pin-approved.sh base.yaml .github/workflows/cd.yaml"'
+run_mutation "publish-pin check allowed to fail" \
+	'.jobs."publish-pin-approved".steps[3]."continue-on-error" = true'
+run_mutation "publish-pin job made conditional" \
+	'.jobs."publish-pin-approved".if = "github.actor == '\''devantler'\''"'
+# shellcheck disable=SC2016
+run_mutation "publish-pin result removed from aggregate" \
+	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.example.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }}"'
+# shellcheck disable=SC2016
+run_mutation "publish-pin result guard removed" \
+	'.jobs."ci-required-checks".steps[1].if = "${{ needs.workflow-caller-pins.result != '\''success'\'' || needs.example.result != '\''success'\'' || needs.delivery-inputs.result != '\''success'\'' }}"'
 # The GitHub expression is mutation data, not a shell expansion.
 # shellcheck disable=SC2016
 run_mutation "delivery result removed from aggregate" \
@@ -341,4 +399,4 @@ run_mutation "contract ignore removed" '' '' '' '' \
 run_mutation "reference local validation command removed" '' '' '' '' '' \
 	'/sh scripts\/tenant-ci-contract.test.sh/d'
 
-echo "PASS: tenant CI contract (happy path + 37 safety mutations)"
+echo "PASS: tenant CI contract (happy path + 48 safety mutations)"
