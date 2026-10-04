@@ -720,6 +720,10 @@ run_platform_mutation "default-deny ingress allowance broadened" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = [{"fromEntities": ["all"]}]'
 run_platform_mutation "default-deny egress allowance broadened" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [{"toEntities": ["all"]}]'
+run_platform_mutation "default-deny ingress admits world traffic" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = [{"fromEntities": ["world"]}]'
+run_platform_mutation "default-deny egress admits world traffic" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [{"toEntities": ["world"]}]'
 run_platform_mutation "default-deny ingress has no Cilium rule block" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = []'
 run_platform_mutation "default-deny egress has no Cilium rule block" \
