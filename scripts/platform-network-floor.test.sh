@@ -67,6 +67,8 @@ validate_platform_route_hostnames() {
 	'
 }
 
+# Validate the rendered Platform policy and tenant policy, Service, Deployment
+# and HTTPRoute. Exit on incomplete inputs, widened traffic or missing isolation.
 validate_network_floor() {
 	platform_policy=$1
 	scaffold_policy=$2
@@ -83,11 +85,11 @@ validate_network_floor() {
 	[ -f "$http_route" ] || fail "rendered tenant HTTPRoute is missing: $http_route"
 
 	# Cilium's CRD requires at least one policy direction to be present, so the
-	# generated default-deny carries empty ingress/egress allow lists and relies on
-	# enableDefaultDeny to activate isolation. Empty lists select no traffic, so the
+	# generated default-deny carries one empty ingress/egress rule block and relies on
+	# enableDefaultDeny to activate isolation. Empty blocks select no traffic, so the
 	# namespace stays fail-closed and the tenant allow policy remains the only thing
 	# that opens it. An ingressDeny/egressDeny entry would take precedence over that
-	# allow policy, and a non-empty ingress/egress would widen the floor, so reject
+	# allow policy, and a traffic matcher inside either block would widen the floor, so reject
 	# both drifts explicitly.
 	# Keep independent assertions in an array. yq's boolean operator changes the
 	# input context of its right-hand expression, which can hide missing fields.
@@ -131,10 +133,14 @@ validate_network_floor() {
 			.generate.data.spec.enableDefaultDeny.egress == true,
 			(.generate.data.spec | has("ingress")),
 			(.generate.data.spec.ingress | tag) == "!!seq",
-			(.generate.data.spec.ingress | length) == 0,
+			(.generate.data.spec.ingress | length) == 1,
+			(.generate.data.spec.ingress[0] | tag) == "!!map",
+			(.generate.data.spec.ingress[0] | keys | length) == 0,
 			(.generate.data.spec | has("egress")),
 			(.generate.data.spec.egress | tag) == "!!seq",
-			(.generate.data.spec.egress | length) == 0,
+			(.generate.data.spec.egress | length) == 1,
+			(.generate.data.spec.egress[0] | tag) == "!!map",
+			(.generate.data.spec.egress[0] | keys | length) == 0,
 			(.generate.data.spec | has("ingressDeny") | not),
 			(.generate.data.spec | has("egressDeny") | not)
 		] | all
@@ -716,6 +722,26 @@ run_platform_mutation "default-deny ingress allowance broadened" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = [{"fromEntities": ["all"]}]'
 run_platform_mutation "default-deny egress allowance broadened" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [{"toEntities": ["all"]}]'
+run_platform_mutation "default-deny ingress admits world traffic" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = [{"fromEntities": ["world"]}]'
+run_platform_mutation "default-deny egress admits world traffic" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [{"toEntities": ["world"]}]'
+run_platform_mutation "default-deny ingress has no Cilium rule block" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = []'
+run_platform_mutation "default-deny egress has no Cilium rule block" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = []'
+run_platform_mutation "default-deny ingress rule is null" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = [null]'
+run_platform_mutation "default-deny egress rule is null" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [null]'
+run_platform_mutation "default-deny ingress rule is a scalar" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = [""]'
+run_platform_mutation "default-deny egress rule is a scalar" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [""]'
+run_platform_mutation "default-deny ingress has an extra rule" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.ingress) = [{}, {}]'
+run_platform_mutation "default-deny egress has an extra rule" \
+	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.egress) = [{}, {}]'
 run_platform_mutation "default-deny ingress isolation disabled" \
 	'(.spec.rules[] | select(.name == "generate-default-deny").generate.data.spec.enableDefaultDeny.ingress) = false'
 run_platform_mutation "default-deny egress isolation disabled" \
