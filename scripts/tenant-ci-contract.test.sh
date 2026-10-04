@@ -16,6 +16,8 @@ fail() {
 	exit 1
 }
 
+# Validate the caller's immutable pins, permissions and exact required-job inputs.
+# Refuse incomplete or widened delivery gates before running mutation controls.
 validate_contract() {
 	ci_file=$1
 	scaffold_file=$2
