@@ -154,7 +154,7 @@ validate_contract() {
 	# shellcheck disable=SC2016
 	assert_ci "required-check aggregate must consume the exact results" '
 		[.jobs."ci-required-checks".steps[] | select(
-			(.uses | test("^devantler-tech/actions/aggregate-job-checks@[0-9a-f]{40}$"))
+			(.uses | test("^devantler-tech/\\.github/actions/aggregate-job-checks@[0-9a-f]{40}$"))
 			and .with."job-results" == "${{ needs.example.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }} ${{ needs.publish-pin-approved.result }}"
 			and ((keys | sort | join(",")) == "name,uses,with")
 			and ((.with | keys | sort | join(",")) == "job-results")
