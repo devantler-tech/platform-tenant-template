@@ -67,6 +67,8 @@ validate_platform_route_hostnames() {
 	'
 }
 
+# Validate the rendered Platform policy and tenant policy, Service, Deployment
+# and HTTPRoute. Exit on incomplete inputs, widened traffic or missing isolation.
 validate_network_floor() {
 	platform_policy=$1
 	scaffold_policy=$2
