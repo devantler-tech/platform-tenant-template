@@ -14,6 +14,7 @@ template_sync_ignore=$repo_root/.templatesyncignore
 dependabot_config=$repo_root/.github/dependabot.yml
 portable_contract=$repo_root/scripts/workflow-caller-pin-contract.test.sh
 
+# Report an unsafe scaffold caller configuration and stop the contract run.
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
 	exit 1
@@ -28,6 +29,7 @@ git init -q --template= "$ignore_probe" ||
 
 # tenant_ignored succeeds when <ignore-file> makes template sync skip <path>, read with .gitignore rules
 # (wildcards and negation included) as the file's header documents.
+# Check that synchronization excludes a tenant-owned path from overwrite.
 tenant_ignored() {
 	case "$1" in
 	/*) rules=$1 ;;
@@ -66,6 +68,7 @@ yq eval -e '
 ' "$tenant_ci_workflow" >/dev/null ||
 	fail 'tenant required checks must depend on the portable workflow-caller pin contract'
 
+# Validate the shipped workflow, ownership exclusions and update grouping.
 validate_contract() {
 	cd_file=$1
 	release_file=$2
@@ -82,7 +85,8 @@ validate_contract() {
 		"$cd_file" >/dev/null ||
 		fail 'the publish caller must keep the producer-side ref guard enabled'
 
-	# The two assertions above require all three callers to move together. Dependabot treats
+	# Canonical release and sync callers move together within their own catalogue.
+	# The retained legacy publisher has an independent reviewed version. Dependabot treats
 	# each reusable workflow as its own dependency, so with no group it opens one pull request
 	# per caller — #156, #157 and #158 each touched exactly one file — and every one of them
 	# arrives with the other two still behind, failing those assertions in required CI. No merge
@@ -104,7 +108,7 @@ validate_contract() {
 	# advisory bump is handled by a MANUAL escalation, not by anything here: this test deliberately
 	# does not assert that path, and no workflow implements it, so the remedy is an engineer adapting
 	# the partial pull request — behind a draft fence and a fresh exact-head review, as AGENTS.md
-	# prescribes for a bot PR that cannot finish on its own — to move all three callers to one
+	# prescribes for a bot PR that cannot finish on its own — to move the canonical callers to one
 	# reviewed SHA. The escalation's trigger, actor and action are written out in
 	# `.github/dependabot.yml` beside the group itself.
 	#
@@ -122,7 +126,7 @@ validate_contract() {
 		  | select((."applies-to" // "version-updates") == "version-updates")
 		  | select(((."exclude-patterns" // []) | length) == 0)] | length > 0' \
 		"$dependabot_file" >/dev/null ||
-		fail 'dependabot must carry a github-actions group whose patterns cover devantler-tech/* and which applies to version updates, so all three callers advance in one pull request; without it the shared-commit assertion above blocks every dependency update'
+		fail 'dependabot must carry a github-actions group whose patterns cover devantler-tech/* and which applies to version updates, so the canonical callers advance in one pull request; without it the shared-commit assertion above blocks every dependency update'
 
 
 	yq eval -e \
@@ -198,6 +202,7 @@ validate_contract \
 mutation_dir=$(mktemp -d)
 mutations_run=0
 
+# Require the modified scaffold to fail for the named safety condition.
 run_mutation() {
 	description=$1
 	file_kind=$2
@@ -249,15 +254,15 @@ run_mutation 'publish caller SHA pin removed' cd \
 run_mutation 'publisher-side caller pin disabled' cd \
 	'.jobs.publish.with."enable-caller-pin" = false'
 run_mutation 'release caller SHA pin removed' release \
-	'.jobs.release.uses = "devantler-tech/actions/.github/workflows/create-release.yaml@main"'
+	'.jobs.release.uses = "devantler-tech/.github/.github/workflows/create-release.yaml@main"'
 run_mutation 'release issue isolation disabled' release \
 	'.jobs.release.with."disable-issue-side-effects" = false'
 run_mutation 'template-sync caller SHA pin removed' template-sync \
-	'.jobs."template-sync".uses = "devantler-tech/actions/.github/workflows/template-sync.yaml@main"'
+	'.jobs."template-sync".uses = "devantler-tech/.github/.github/workflows/template-sync.yaml@main"'
 run_mutation 'template-sync verified App commit path regressed' template-sync \
-	'.jobs."template-sync".uses = "devantler-tech/actions/.github/workflows/template-sync.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32"'
+	'.jobs."template-sync".uses = "devantler-tech/.github/.github/workflows/template-sync.yaml@4b00bd6698af033dc472b39a7e609173fe38dfb1"'
 run_mutation 'template-sync unapproved commit substituted' template-sync \
-	'.jobs."template-sync".uses = "devantler-tech/actions/.github/workflows/template-sync.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+	'.jobs."template-sync".uses = "devantler-tech/.github/.github/workflows/template-sync.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 run_mutation 'template-sync App token disabled' template-sync \
 	'.jobs."template-sync".with."use-app-token" = false'
 run_mutation 'required scaffold invocation removed' validation \
@@ -299,13 +304,15 @@ run_mutation 'dependabot group excluding a single caller from the group' dependa
 	'(.updates[] | select(."package-ecosystem" == "github-actions") | .groups."devantler-tech-actions"."exclude-patterns") = ["devantler-tech/actions/.github/workflows/cd*"]'
 
 
-# A whole-fleet rollback is the case single-file mutation cannot express: every caller still
-# agrees with every other, so only the version floor can reject it. This is the shape #149 saw
-# in the wild and the one #152 asks for RED/GREEN proof on.
+# A coordinated rollback within either family must reach its version control;
+# a legacy namespace rejection does not prove that a canonical floor works.
+# Exercise Fleet's independently owned workflow exclusions as negative controls.
 run_fleet_mutation() {
 	description=$1
 	ref=$2
 	version=$3
+	family=$4
+	expected_reason=$5
 	mutations_run=$((mutations_run + 1))
 
 	cp "$cd_workflow" "$mutation_dir/cd.yaml"
@@ -324,39 +331,50 @@ run_fleet_mutation() {
 		rest=${pair#*|}
 		mutant_path=${rest%%|*}
 		mutant_workflow=${rest##*|}
+		if [ "$family" = actions ]; then
+			[ "$mutant_workflow" = publish-app ] || continue
+		else
+			[ "$mutant_workflow" != publish-app ] || continue
+		fi
 		yq eval \
-			"${mutant_path} = \"devantler-tech/actions/.github/workflows/${mutant_workflow}.yaml@${ref}\" |
+			"${mutant_path} = \"devantler-tech/${family}/.github/workflows/${mutant_workflow}.yaml@${ref}\" |
 			 ${mutant_path} line_comment = \"${version}\"" \
 			"$mutation_dir/$mutant_file" > "$mutation_dir/mutant.yaml"
 		mv "$mutation_dir/mutant.yaml" "$mutation_dir/$mutant_file"
 	done
 
-	if (validate_contract \
+	if rejection=$( (validate_contract \
 		"$mutation_dir/cd.yaml" \
 		"$mutation_dir/release.yaml" \
 		"$mutation_dir/template-sync.yaml" \
 		"$mutation_dir/validation.yaml" \
 		"$mutation_dir/REFERENCE.md" \
 		"$mutation_dir/templatesyncignore" \
-		"$mutation_dir/dependabot.yml") >/dev/null 2>&1; then
+		"$mutation_dir/dependabot.yml") 2>&1 >/dev/null); then
 		fail "mutation passed: $description"
 	fi
+	printf '%s\n' "$rejection" | grep -qF -- "$expected_reason" ||
+		fail "mutation rejected for the wrong reason: $description; got $rejection"
 }
 
 run_mutation 'publish caller rolled back while the others stay current' cd \
 	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32"'
 run_mutation 'release caller rolled back while the others stay current' release \
-	'.jobs.release.uses = "devantler-tech/actions/.github/workflows/create-release.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32"'
-run_fleet_mutation 'whole fleet rolled back below the reviewed floor' \
-	'b089a1b041cb86af22cdc57de58a4d7d258dcc32' 'v13.1.1'
-run_fleet_mutation 'whole fleet rolled back to the v13.0.7 state #149 recorded' \
-	'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'v13.0.7'
-run_fleet_mutation 'version comment stripped from every pin' \
-	'd72ecd5e8b680c2066a490a2b761a8913c454575' ''
-run_fleet_mutation 'version comment made unparseable on every pin' \
-	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'vLATEST.x.y'
-run_fleet_mutation 'version comment carrying a fourth component on every pin' \
-	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'v13.1.3.0'
+	'.jobs.release.uses = "devantler-tech/.github/.github/workflows/create-release.yaml@4b00bd6698af033dc472b39a7e609173fe38dfb1"'
+run_fleet_mutation 'publisher below reviewed floor' \
+	'b089a1b041cb86af22cdc57de58a4d7d258dcc32' 'v13.1.1' actions 'older than the reviewed floor'
+run_fleet_mutation 'publisher at historical v13.0.7' \
+	'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'v13.0.7' actions 'older than the reviewed floor'
+run_fleet_mutation 'publisher version comment stripped' \
+	'd72ecd5e8b680c2066a490a2b761a8913c454575' '' actions 'version comment of the form'
+run_fleet_mutation 'publisher version comment unparseable' \
+	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'vLATEST.x.y' actions 'version comment of the form'
+run_fleet_mutation 'publisher version comment carrying a fourth component' \
+	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'v13.1.3.0' actions 'version comment of the form'
+run_fleet_mutation 'canonical pair below reviewed floor' \
+	'4b00bd6698af033dc472b39a7e609173fe38dfb1' 'v6.0.6' .github 'older than the reviewed floor'
+run_fleet_mutation 'canonical pair carrying a forged release comment' \
+	'4b00bd6698af033dc472b39a7e609173fe38dfb1' 'v6.1.0' .github 'the comment must name the tag'
 
 
 printf 'PASS: tenant workflow caller contract (happy path + %s safety mutations)\n' "$mutations_run"
