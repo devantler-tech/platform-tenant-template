@@ -5,10 +5,12 @@ repo_root=$(dirname -- "$script_dir")
 cd_workflow=$repo_root/.github/workflows/cd.yaml
 release_workflow=$repo_root/.github/workflows/release.yaml
 template_sync_workflow=$repo_root/.github/workflows/template-sync.yaml
+# Report the failed contract and stop before admitting a caller.
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 # Only the two reviewed catalogue families may supply authenticated release tags.
 # Annotated tags resolve to their peeled commit; read errors fail closed.
+# Resolve the exact catalogue tag, preferring an annotated tag's peeled commit.
 catalogue_tag_commit() {
  case "$1" in actions|.github) ;; *) return 1 ;; esac
  if ! listing=$(GIT_TERMINAL_PROMPT=0 git ls-remote --tags "https://github.com/devantler-tech/$1" "refs/tags/$2" "refs/tags/$2^{}" 2>&1); then
@@ -21,6 +23,7 @@ catalogue_tag_commit() {
   grep -Ex '[0-9a-f]{40}'
 }
 
+# Check normalized SemVer, the catalogue's reviewed floor and its tag binding.
 validate_version() {
  catalogue=$1
  ref=$2
@@ -45,6 +48,7 @@ validate_version() {
   fail "devantler-tech/$catalogue pins $ref but its version comment names $version, which is $tag_ref; the comment must name the tag of the pinned commit"
 }
 
+# Admit the publisher separately from the aligned canonical release/sync pair.
 validate_pins() {
  cd_file=$1
  release_file=$2
@@ -55,7 +59,9 @@ validate_pins() {
   fail 'the release caller must pin canonical create-release.yaml to a commit SHA'
  yq eval -e '.jobs."template-sync".uses | test("^devantler-tech/\\.github/\\.github/workflows/template-sync\\.yaml@[0-9a-f]{40}$")' "$template_sync_file" >/dev/null ||
   fail 'the template-sync caller must pin canonical template-sync.yaml to a commit SHA'
+ # Read the immutable commit from the selected workflow's caller field.
  pinned_ref_of() { yq eval -r "$2 | sub(\".*@\"; \"\")" "$1"; }
+ # Read the human version comment bound to that immutable commit.
  pinned_version_of() { yq eval -r "$2 | line_comment" "$1"; }
  cd_ref=$(pinned_ref_of "$cd_file" '.jobs.publish.uses')
  release_ref=$(pinned_ref_of "$release_file" '.jobs.release.uses')
@@ -79,15 +85,18 @@ validate_pins "$cd_workflow" "$release_workflow" "$template_sync_workflow"
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
 mutations_run=0
+# Start each negative control with independent copies of the real callers.
 reset_mutation() {
  cp "$cd_workflow" "$mutation_dir/cd.yaml"
  cp "$release_workflow" "$mutation_dir/release.yaml"
  cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
 }
+# Change one copied caller with the supplied YAML expression.
 mutate() {
  yq eval "$2" "$mutation_dir/$1.yaml" >"$mutation_dir/mutant.yaml"
  mv "$mutation_dir/mutant.yaml" "$mutation_dir/$1.yaml"
 }
+# Require both refusal and its expected reason, avoiding unrelated-failure passes.
 rejected() {
  mutations_run=$((mutations_run + 1))
  if rejection=$( (validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" "$mutation_dir/template-sync.yaml") 2>&1 >/dev/null); then
@@ -95,6 +104,7 @@ rejected() {
  fi
  printf '%s\n' "$rejection" | grep -qF -- "$2" || fail "mutation rejected for the wrong reason: $1; expected '$2', got: $rejection"
 }
+# Run one caller-field mutation without leaking it into later scenarios.
 single_mutation() {
  reset_mutation
  mutate "$2" "$3"
@@ -109,6 +119,7 @@ single_mutation 'canonical SHA divergence' release '.jobs.release.uses |= sub("@
 single_mutation 'canonical comment divergence' release '.jobs.release.uses line_comment = "v6.0.6"' 'must carry the same version comment'
 single_mutation 'publisher leading-zero version' cd '.jobs.publish.uses line_comment = "v13.01.2"' 'version comment of the form'
 single_mutation 'consumer npm alignment disabled' release '.jobs.release.with."align-npm-with-consumer-contract" = false' 'retain consumer npm alignment'
+# Change a whole catalogue family to test its version floor and tag identity.
 repin_mutation() {
  reset_mutation
  family=$2

@@ -14,6 +14,7 @@ template_sync_ignore=$repo_root/.templatesyncignore
 dependabot_config=$repo_root/.github/dependabot.yml
 portable_contract=$repo_root/scripts/workflow-caller-pin-contract.test.sh
 
+# Report an unsafe scaffold caller configuration and stop the contract run.
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
 	exit 1
@@ -28,6 +29,7 @@ git init -q --template= "$ignore_probe" ||
 
 # tenant_ignored succeeds when <ignore-file> makes template sync skip <path>, read with .gitignore rules
 # (wildcards and negation included) as the file's header documents.
+# Check that synchronization excludes a tenant-owned path from overwrite.
 tenant_ignored() {
 	case "$1" in
 	/*) rules=$1 ;;
@@ -66,6 +68,7 @@ yq eval -e '
 ' "$tenant_ci_workflow" >/dev/null ||
 	fail 'tenant required checks must depend on the portable workflow-caller pin contract'
 
+# Validate the shipped workflow, ownership exclusions and update grouping.
 validate_contract() {
 	cd_file=$1
 	release_file=$2
@@ -199,6 +202,7 @@ validate_contract \
 mutation_dir=$(mktemp -d)
 mutations_run=0
 
+# Require the modified scaffold to fail for the named safety condition.
 run_mutation() {
 	description=$1
 	file_kind=$2
@@ -302,6 +306,7 @@ run_mutation 'dependabot group excluding a single caller from the group' dependa
 
 # A coordinated rollback within either family must reach its version control;
 # a legacy namespace rejection does not prove that a canonical floor works.
+# Exercise Fleet's independently owned workflow exclusions as negative controls.
 run_fleet_mutation() {
 	description=$1
 	ref=$2
