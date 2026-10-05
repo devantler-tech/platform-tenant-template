@@ -14,6 +14,5 @@ jobs:
     uses: devantler-tech/.github/.github/workflows/create-release.yaml@e271b7ff25d4ce97b067612e7ba0c5d657b6a17a # v6.1.0
     with:
       disable-issue-side-effects: true
-      align-npm-with-consumer-contract: true
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}

@@ -73,8 +73,10 @@ validate_pins() {
  [ "$release_version" = "$sync_version" ] || fail 'canonical release and template-sync callers must carry the same version comment'
  validate_version actions "$cd_ref" "$cd_version" v13.1.2
  validate_version .github "$release_ref" "$release_version" v6.1.0
- yq eval -e '.jobs.release.with."align-npm-with-consumer-contract" == true' "$release_file" >/dev/null ||
-  fail 'canonical release must retain consumer npm alignment'
+ # The reviewed canonical floor enables alignment by default. Keep the
+ # temporary rollout input out of tenants so its declaration can be retired.
+ yq eval -e '.jobs.release.with | has("align-npm-with-consumer-contract") | not' "$release_file" >/dev/null ||
+  fail 'canonical release must use default consumer npm alignment'
 }
 if [ "${1:-}" = --validate ]; then
  [ "$#" -eq 4 ] || fail 'usage: workflow-caller-pin-contract.test.sh --validate <cd> <release> <template-sync>'
@@ -118,7 +120,8 @@ single_mutation 'wrong sync path' template-sync '.jobs."template-sync".uses |= s
 single_mutation 'canonical SHA divergence' release '.jobs.release.uses |= sub("@.*"; "@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")' 'must pin the same commit'
 single_mutation 'canonical comment divergence' release '.jobs.release.uses line_comment = "v6.0.6"' 'must carry the same version comment'
 single_mutation 'publisher leading-zero version' cd '.jobs.publish.uses line_comment = "v13.01.2"' 'version comment of the form'
-single_mutation 'consumer npm alignment disabled' release '.jobs.release.with."align-npm-with-consumer-contract" = false' 'retain consumer npm alignment'
+single_mutation 'consumer npm alignment disabled' release '.jobs.release.with."align-npm-with-consumer-contract" = false' 'use default consumer npm alignment'
+single_mutation 'redundant consumer npm alignment opt-in' release '.jobs.release.with."align-npm-with-consumer-contract" = true' 'use default consumer npm alignment'
 # Change a whole catalogue family to test its version floor and tag identity.
 repin_mutation() {
  reset_mutation
