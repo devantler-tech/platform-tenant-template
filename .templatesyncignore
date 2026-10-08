@@ -1,7 +1,7 @@
 # .templatesyncignore — files an INSTANCE (tenant) created from this template OWNS.
 #
 # Same syntax as .gitignore. The weekly template-sync workflow
-# (devantler-tech/actions .github/workflows/template-sync.yaml, using
+# (devantler-tech/.github .github/workflows/template-sync.yaml, using
 # AndreasAugustin/actions-template-sync) is skipped in this template repo itself
 # and runs in every tenant created from it — opening a PR that brings template
 # changes downstream. It only ever touches files that exist in this template, and
@@ -59,4 +59,9 @@ scripts/platform-vpa-floor-contract.test.sh
 .github/workflows/validate-scaffold.yaml
 
 # --- This ignore-list itself (the tenant curates its own ownership) ---
+# The tenant's copy is never overwritten, but each sync ADDS the entries of this
+# template's list that the tenant's copy lacks, so an exclusion added here reaches
+# tenants created before it. A tenant's own entries are kept. To receive a file
+# this list excludes, a tenant adds the line `!<entry>` (for example
+# `!.github/CODEOWNERS`) to its own copy, and that one entry is not added.
 .templatesyncignore

@@ -139,6 +139,11 @@ validate_contract() {
 		"$template_sync_file" >/dev/null ||
 		fail 'template sync must use the App token so workflow-file updates trigger tenant CI'
 
+	yq eval -e \
+		'.jobs."template-sync".with."merge-template-ignore-entries" == true' \
+		"$template_sync_file" >/dev/null ||
+		fail 'template sync must merge the template ignore entries so an exclusion added here reaches tenants created before it'
+
 	yq eval -e '
 		[
 			.jobs."validate-scaffold".steps[]
@@ -265,6 +270,10 @@ run_mutation 'template-sync unapproved commit substituted' template-sync \
 	'.jobs."template-sync".uses = "devantler-tech/.github/.github/workflows/template-sync.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 run_mutation 'template-sync App token disabled' template-sync \
 	'.jobs."template-sync".with."use-app-token" = false'
+run_mutation 'template-sync ignore-entry merge disabled' template-sync \
+	'.jobs."template-sync".with."merge-template-ignore-entries" = false'
+run_mutation 'template-sync ignore-entry merge removed' template-sync \
+	'del(.jobs."template-sync".with."merge-template-ignore-entries")'
 run_mutation 'required scaffold invocation removed' validation \
 	'del(.jobs."validate-scaffold".steps[] | select(.run == "sh scripts/workflow-caller-contract.test.sh"))'
 run_mutation 'reference ownership table marker removed' reference \

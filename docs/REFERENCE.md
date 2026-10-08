@@ -35,6 +35,11 @@ syntax as `.gitignore`). template-sync only ever brings over files that exist in
 this template, so you only need to ignore the scaffolding files below — not your
 app code.
 
+Your `.templatesyncignore` is never overwritten, but each sync adds the entries of
+the template's list that yours lacks, so a file the template later decides to keep
+out of tenants stays out of yours too. Your own entries are kept. To receive a
+file the template excludes, add the line `!<entry>` to your list.
+
 **Owned by the template (kept in sync — do not edit in your tenant):**
 
 | File | Purpose |
