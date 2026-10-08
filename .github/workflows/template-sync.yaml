@@ -24,5 +24,8 @@ jobs:
     with:
       source-repo-path: devantler-tech/platform-tenant-template
       use-app-token: true
+      # Adds the entries of this template's .templatesyncignore that a tenant's copy lacks,
+      # so an exclusion added here also reaches tenants created before it (#171).
+      merge-template-ignore-entries: true
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
