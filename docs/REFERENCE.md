@@ -35,10 +35,15 @@ syntax as `.gitignore`). template-sync only ever brings over files that exist in
 this template, so you only need to ignore the scaffolding files below — not your
 app code.
 
-Your `.templatesyncignore` is never overwritten, but each sync adds the entries of
-the template's list that yours lacks, so a file the template later decides to keep
-out of tenants stays out of yours too. Your own entries are kept. To receive a
-file the template excludes, add the line `!<entry>` to your list.
+Your `.templatesyncignore` is never overwritten. The current scaffold's
+[sync caller](../.github/workflows/template-sync.yaml) enables
+`merge-template-ignore-entries`, so it adds entries from the template's list
+that yours lacks and keeps your own entries. Older consumer callers may not
+enable that option. Before their sync runs, add and commit any missing ownership
+entry yourself. If a sync PR has already proposed replacing an owned guide,
+restore the tailored guide and commit the ignore entry before merging it;
+changing the ignore file does not undo an existing proposal. To receive a file
+the template excludes, add the line `!<entry>` to your list.
 
 **Owned by the template (kept in sync — do not edit in your tenant):**
 

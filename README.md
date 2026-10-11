@@ -64,9 +64,10 @@ the CLI route below.
    explains which files sync may replace. Sync needs the configured GitHub App
    credentials; they are not needed for the public local inspection above.
    Existing tenants must confirm their own ignore file contains `CONTRIBUTING.md`
-   before accepting a sync that introduces this guide. The current workflow
-   merges new ignore entries, but an older consumer workflow may not; add and
-   commit the entry yourself if missing, preserving your tailored guide.
+   before the sync runs. The current workflow merges new ignore entries, but an
+   older consumer workflow may not; add and commit the entry yourself if missing.
+   If a sync PR is already open, restore your tailored guide and commit the ignore
+   entry before merging it: the entry does not undo changes already proposed.
 5. **Register the tenant on the platform.** Follow
    [`platform/docs/TENANTS.md`](https://github.com/devantler-tech/platform/blob/main/docs/TENANTS.md).
 

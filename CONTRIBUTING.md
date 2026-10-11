@@ -7,9 +7,11 @@ This guide is for the **public upstream template**, not a tenant's private app.
 Generated repositories own this guide and should replace it with their process.
 Their own `.templatesyncignore` must contain `CONTRIBUTING.md` to protect it.
 New projects include that entry. The current template sync workflow merges new
-ignore entries into consumers; older workflows may not. Before accepting a sync
-that introduces this guide, confirm the entry is present in your own ignore file
-or add and commit it yourself. See the [ownership reference](docs/REFERENCE.md#what-the-template-owns-vs-what-you-own).
+ignore entries into consumers; older workflows may not. Before the sync runs,
+confirm the entry is present in your own ignore file or add and commit it yourself.
+If a sync PR is already open, restore your tailored guide and commit the ignore
+entry before merging it; the entry does not undo changes already proposed.
+See the [ownership reference](docs/REFERENCE.md#what-the-template-owns-vs-what-you-own).
 
 Do not put credentials, private tenant details or sensitive vulnerabilities in
 a public issue or PR. Use this repository's private
