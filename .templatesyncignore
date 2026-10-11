@@ -18,6 +18,7 @@
 # --- Identity & docs (tenant-specific) ---
 AGENTS.md
 README.md
+CONTRIBUTING.md
 LICENSE
 .github/CODEOWNERS
 .claude/skills/maintain/SKILL.md

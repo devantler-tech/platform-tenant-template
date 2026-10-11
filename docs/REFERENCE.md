@@ -82,6 +82,7 @@ AGENTS.md
 .gitignore
 Dockerfile
 README.md
+CONTRIBUTING.md
 LICENSE
 deploy/
 .templatesyncignore
@@ -113,13 +114,18 @@ code owners, so template-sync never overwrites it.
 
 ## How publishing works
 
-`release.yaml` turns Conventional-Commit merges to `main` into `vX.Y.Z` tags.
+In generated tenant repositories with the required App setup, `release.yaml`
+uses eligible Conventional-Commit merges to `main` to decide whether to create
+`vX.Y.Z` tags. It deliberately no-ops in this upstream template.
 Each tag triggers `cd.yaml`, which calls the platform's
 [`publish-app.yaml`](https://github.com/devantler-tech/actions/blob/main/.github/workflows/publish-app.yaml)
 reusable workflow to build the image, **pin its digest into
 `deploy/deployment.yaml`**, push the manifests as an OCI artifact, and
 **cosign-sign** both. The platform's `OCIRepository` verifies that signature, so
-only artifacts from this trusted workflow are reconciled.
+only artifacts from this trusted workflow are eligible for reconciliation after
+the platform has registered the tenant and its applicable publisher-approval
+checks pass. Workflow configuration alone does not prove that publication or
+reconciliation succeeded.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
