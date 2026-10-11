@@ -4,8 +4,12 @@ Help make tenant onboarding safer and easier: improve a confusing explanation,
 an example manifest or a focused scaffold check. Discuss substantial work in an
 [issue](https://github.com/devantler-tech/platform-tenant-template/issues) first.
 This guide is for the **public upstream template**, not a tenant's private app.
-Generated repositories own this guide and should replace it with their process;
-[`.templatesyncignore`](.templatesyncignore) prevents sync overwriting it.
+Generated repositories own this guide and should replace it with their process.
+Their own `.templatesyncignore` must contain `CONTRIBUTING.md` to protect it.
+New projects include that entry. The current template sync workflow merges new
+ignore entries into consumers; older workflows may not. Before accepting a sync
+that introduces this guide, confirm the entry is present in your own ignore file
+or add and commit it yourself. See the [ownership reference](docs/REFERENCE.md#what-the-template-owns-vs-what-you-own).
 
 Do not put credentials, private tenant details or sensitive vulnerabilities in
 a public issue or PR. Use this repository's private
