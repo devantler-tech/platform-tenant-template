@@ -1,5 +1,8 @@
 # AGENTS.md
 
+For contributions to this public upstream starter, read [CONTRIBUTING.md](CONTRIBUTING.md).
+The tenant-specific sections below are scaffolding for generated app repositories.
+
 > **Tenant scaffold.** Replace the project-specific sections below with your app's
 > details. This file is **tenant-owned** — keep it in `.templatesyncignore` so
 > template-sync never overwrites your tailored version. Keep the `## Maintenance`

@@ -35,10 +35,15 @@ syntax as `.gitignore`). template-sync only ever brings over files that exist in
 this template, so you only need to ignore the scaffolding files below — not your
 app code.
 
-Your `.templatesyncignore` is never overwritten, but each sync adds the entries of
-the template's list that yours lacks, so a file the template later decides to keep
-out of tenants stays out of yours too. Your own entries are kept. To receive a
-file the template excludes, add the line `!<entry>` to your list.
+Your `.templatesyncignore` is never overwritten. The current scaffold's
+[sync caller](../.github/workflows/template-sync.yaml) enables
+`merge-template-ignore-entries`, so it adds entries from the template's list
+that yours lacks and keeps your own entries. Older consumer callers may not
+enable that option. Before their sync runs, add and commit any missing ownership
+entry yourself. If a sync PR has already proposed replacing an owned guide,
+restore the tailored guide and commit the ignore entry before merging it;
+changing the ignore file does not undo an existing proposal. To receive a file
+the template excludes, add the line `!<entry>` to your list.
 
 **Owned by the template (kept in sync — do not edit in your tenant):**
 
@@ -82,6 +87,7 @@ AGENTS.md
 .gitignore
 Dockerfile
 README.md
+CONTRIBUTING.md
 LICENSE
 deploy/
 .templatesyncignore
@@ -113,13 +119,18 @@ code owners, so template-sync never overwrites it.
 
 ## How publishing works
 
-`release.yaml` turns Conventional-Commit merges to `main` into `vX.Y.Z` tags.
+In generated tenant repositories with the required App setup, `release.yaml`
+uses eligible Conventional-Commit merges to `main` to decide whether to create
+`vX.Y.Z` tags. It deliberately no-ops in this upstream template.
 Each tag triggers `cd.yaml`, which calls the platform's
 [`publish-app.yaml`](https://github.com/devantler-tech/actions/blob/main/.github/workflows/publish-app.yaml)
 reusable workflow to build the image, **pin its digest into
 `deploy/deployment.yaml`**, push the manifests as an OCI artifact, and
 **cosign-sign** both. The platform's `OCIRepository` verifies that signature, so
-only artifacts from this trusted workflow are reconciled.
+only artifacts from this trusted workflow are eligible for reconciliation after
+the platform has registered the tenant and its applicable publisher-approval
+checks pass. Workflow configuration alone does not prove that publication or
+reconciliation succeeded.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
