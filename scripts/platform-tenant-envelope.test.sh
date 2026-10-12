@@ -23,7 +23,9 @@ expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/work
 # explicit alternation of its approved publish-app.yaml revisions (full 40-hex SHAs)
 # from scripts/publish-workflow-approved-revisions.tsv. Which SHAs is platform's
 # business; that the subject names only full SHAs, and no wildcard, is the contract.
-expected_manual_oidc_subject_shape='^\^https://github\\\.com/devantler-tech/actions/\\\.github/workflows/publish-app\\\.yaml@\((?:[0-9a-f]{40})(?:\|[0-9a-f]{40})*\)\$$'
+# One approved revision is written bare and several as a parenthesised group; an
+# ungrouped alternation is refused, because its anchors would bind only the ends.
+expected_manual_oidc_subject_shape='^\^https://github\\\.com/devantler-tech/actions/\\\.github/workflows/publish-app\\\.yaml@(?:[0-9a-f]{40}|\((?:[0-9a-f]{40})(?:\|[0-9a-f]{40})+\))\$$'
 export expected_publish_workflow expected_publish_app_name
 export expected_oidc_issuer expected_oidc_subject expected_manual_oidc_subject_shape
 
@@ -610,6 +612,12 @@ run_mutation "manual OCI subject ref accepts short SHAs" "$manual_path/oci-repos
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{7,40}$"'
 run_mutation "manual OCI subject end anchor dropped" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}"'
+run_mutation "manual OCI subject alternation left ungrouped" "$manual_path/oci-repository.yaml" \
+	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@1d726483facb9340655489913f609082677be8f5|b089a1b0b089a1b0b089a1b0b089a1b0b089a1b0$"'
+run_mutation "manual OCI subject groups a single revision" "$manual_path/oci-repository.yaml" \
+	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(1d726483facb9340655489913f609082677be8f5)$"'
+run_mutation "manual OCI subject group holds a wildcard" "$manual_path/oci-repository.yaml" \
+	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(1d726483facb9340655489913f609082677be8f5|.*)$"'
 run_mutation "manual OCI subject producer org changed" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/evil-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$"'
 run_mutation "manual OCI source suspended" "$manual_path/oci-repository.yaml" \
