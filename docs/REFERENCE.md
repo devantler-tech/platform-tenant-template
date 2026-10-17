@@ -121,7 +121,13 @@ code owners, so template-sync never overwrites it.
 
 In generated tenant repositories with the required App setup, `release.yaml`
 uses eligible Conventional-Commit merges to `main` to decide whether to create
-`vX.Y.Z` tags. It deliberately no-ops in this upstream template.
+`vX.Y.Z` tags. It deliberately no-ops in this upstream template. `.releaserc`
+cuts a release for `feat`, `fix`, `perf`, breaking and `build(deps)` commits;
+`build(deps)` is Dependabot's prefix for runtime packages and the Docker base
+image, so their updates reach production on their own. GitHub Actions updates
+use the `ci` prefix (set in `.github/dependabot.yml`) and release nothing.
+Tenants own both files, so an existing tenant adds the `build(deps)` rule and
+the `ci` prefix itself.
 Each tag triggers `cd.yaml`, which calls the platform's
 [`publish-app.yaml`](https://github.com/devantler-tech/actions/blob/main/.github/workflows/publish-app.yaml)
 reusable workflow to build the image, **pin its digest into
