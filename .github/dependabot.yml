@@ -8,6 +8,12 @@ updates:
     schedule:
       interval: daily
     open-pull-requests-limit: 10
+    # `.releaserc` releases a patch for `build(deps)` commits, which is how runtime packages and
+    # the base image reach production. Workflow updates change nothing the app serves, so they
+    # use the `ci` prefix and release nothing.
+    commit-message:
+      prefix: "ci"
+      include: "scope"
     # The workflow-caller contract requires all three devantler-tech/actions callers to ride
     # ONE commit, so template-sync cannot carry one workflow forward while rolling another
     # back. Dependabot treats each reusable workflow as its own dependency, so UNGROUPED it
