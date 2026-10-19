@@ -131,6 +131,7 @@ jobs:
                 and ((.run | split("select_named_policy restrict-tenant-secret-stores") | length) == 2)
                 and ((.run | split("ValidatingPolicy") | length) == 9)
                 and ((.run | split("no-such-policy") | length) == 3)
+                and ((.run | split("platform-mutant excluded") | length) == 2)
                 and ((.run | split("app.kubernetes.io/managed-by") | length) == 3)
                 and ((.run | split("--values-file tenant-values.yaml") | length) == 4)
                 and ((.run | split("--userinfo tenant-user-info.yaml") | length) == 4)
@@ -601,7 +602,7 @@ jobs:
             fi
             # --audit-warn: Audit-mode policies warn (they don't block admission);
             # --warn-exit-code 0 activates exit-1-on-failure/error while keeping
-            # warnings non-fatal — verified against kyverno CLI v1.18.2.
+            # warnings non-fatal — verified against kyverno CLI v1.19.1.
             ./kyverno apply "${name}-admission.yaml" --resource rendered.yaml \
               --audit-warn --warn-exit-code 0 2>&1 | tee "${name}-apply.out"
             if [ "${require_pass}" = "true" ]; then
@@ -706,6 +707,9 @@ jobs:
             case "${expected}" in
               pass) result='pass: [1-9][0-9]*, fail: 0, warn: 0, error: 0' ;;
               no-match) result='pass: 0, fail: 0, warn: 0, error: 0, skip: 0' ;;
+              # A CEL policy reports a request its matchConditions exclude
+              # as exactly one skip, distinct from a namespace that never matched.
+              excluded) result='pass: 0, fail: 0, warn: 0, error: 0, skip: 1' ;;
               *) echo "::error::unknown expected result: ${expected}"; return 1 ;;
             esac
             grep -Eq "${result}" "${case_name}.out" || {
@@ -747,7 +751,9 @@ jobs:
             tenant-clustersecretstore.yaml \
             --values-file unmanaged-values.yaml \
             --userinfo tenant-user-info.yaml
-          expect_secretstore_allowed platform-mutant no-match \
+          # Platform-applied resources are carved out by the policy's
+          # not-platform-applied match condition, so the CLI reports one skip.
+          expect_secretstore_allowed platform-mutant excluded \
             tenant-clustersecretstore.yaml \
             --values-file tenant-values.yaml \
             --userinfo platform-user-info.yaml
