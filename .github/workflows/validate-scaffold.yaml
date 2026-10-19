@@ -126,8 +126,12 @@ jobs:
             .jobs.admissibility.steps
             | map(select(
                 .id == "apply-admission-policies"
-                and ((.run | split("restrict-tenant-secret-stores") | length) == 9)
-                and ((.run | split("externalsecret-no-clustersecretstore") | length) == 3)
+                and ((.run | split("restrict-tenant-secret-stores") | length) == 7)
+                and ((.run | split("Tenant ExternalSecrets must reference") | length) == 3)
+                and ((.run | split("select_named_policy ValidatingPolicy restrict-tenant-secret-stores") | length) == 2)
+                and ((.run | split("ValidatingPolicy") | length) == 9)
+                and ((.run | split("no-such-policy") | length) == 3)
+                and ((.run | split("platform-mutant excluded") | length) == 2)
                 and ((.run | split("app.kubernetes.io/managed-by") | length) == 3)
                 and ((.run | split("--values-file tenant-values.yaml") | length) == 4)
                 and ((.run | split("--userinfo tenant-user-info.yaml") | length) == 4)
@@ -274,8 +278,12 @@ jobs:
             "${admission_run} |= sub(\"--userinfo tenant-user-info.yaml\"; \"\")"
           assert_secretstore_mutant_rejected "named policy removed" \
             "${admission_run} |= sub(\"restrict-tenant-secret-stores\"; \"\")"
-          assert_secretstore_mutant_rejected "named rule removed" \
-            "${admission_run} |= sub(\"externalsecret-no-clustersecretstore\"; \"\")"
+          assert_secretstore_mutant_rejected "named check removed" \
+            "${admission_run} |= sub(\"Tenant ExternalSecrets must reference\"; \"\")"
+          assert_secretstore_mutant_rejected "migrated policy kind no longer selected" \
+            "${admission_run} |= sub(\"ValidatingPolicy\"; \"ClusterPolicy\")"
+          assert_secretstore_mutant_rejected "missing-policy regression control removed" \
+            "${admission_run} |= sub(\"no-such-policy\"; \"restrict-tenant-secret-stores\")"
           assert_secretstore_mutant_rejected "security mutation removed" \
             "${admission_run} |= sub(\"ClusterSecretStore\"; \"\")"
           assert_secretstore_mutant_rejected "denial assertion removed" \
@@ -451,7 +459,12 @@ jobs:
   # and never reject an applied manifest. The generated namespace network floor
   # is checked structurally against the scaffold immediately before that apply.
   #
-  # Only `ClusterPolicy` resources are applied. The platform also ships CEL
+  # Only the validation kinds Platform runs at admission are applied:
+  # `ClusterPolicy` and its CEL successor `ValidatingPolicy`. Platform is moving
+  # policies from one to the other, so selecting a single kind would silently drop
+  # every moved rule. Each isolated boundary check instead names the one kind its
+  # assertions are written for, so a policy that changes kind fails that check
+  # with a diagnostic rather than being half-proved. The platform also ships CEL
   # `ImageValidatingPolicy` resources (`verify-app-images`, `verify-ksail-images`),
   # and `verify-app-images` IS Deny-mode over every `ghcr.io/devantler-tech/*`
   # tenant image — so this gate deliberately does not cover the one policy class
@@ -470,8 +483,8 @@ jobs:
     permissions:
       contents: read # checkouts
     env:
-      KYVERNO_CLI_VERSION: v1.18.2
-      KYVERNO_CLI_SHA256: cb2feb8356149fd2fe774c894ccf0969f4a60a83867dd913af724f74ffbbc18b
+      KYVERNO_CLI_VERSION: v1.19.1
+      KYVERNO_CLI_SHA256: b38228f367fc0fdc2b08f4c83ea50ac5f16c60ff8d62d76a66157c33c47b70ae
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
@@ -525,20 +538,51 @@ jobs:
 
           kubectl kustomize deploy/ > rendered.yaml
 
-          # Keep only ClusterPolicies, and only their admission-relevant rules
-          # (drop generate + mutate-existing rules; see the job comment). Plain
-          # mutate rules are KEPT deliberately: the CLI applies them before
+          # Keep only the admission validation kinds (see the job comment): every
+          # ValidatingPolicy as-is, and each ClusterPolicy with only its
+          # admission-relevant rules (drop generate + mutate-existing rules).
+          # Plain mutate rules are KEPT deliberately: the CLI applies them before
           # validating, mirroring the cluster's mutate-then-validate admission
           # order — validating the raw scaffold instead would false-fail rules
           # that an admission mutation satisfies.
           filter_admission_rules() {
             yq eval-all '
-              select(.kind == "ClusterPolicy")
-              | .spec.rules |= map(select(
+              select(.kind == "ClusterPolicy" or .kind == "ValidatingPolicy")
+              | (select(.kind == "ClusterPolicy") | .spec.rules) |= map(select(
                   (has("generate") or (has("mutate") and (.mutate | has("targets")))) | not
                 ))
-              | select((.spec.rules | length) > 0)
+              | select(.kind == "ValidatingPolicy" or (.spec.rules | length) > 0)
             ' "$1"
+          }
+
+          # select_named_policy <kind> <name> <source> <destination>
+          # Writes the one policy of that kind and name, and fails with a
+          # diagnostic when there is not exactly one — including when Platform
+          # has moved it to another kind, which the caller's assertions would
+          # then no longer fit. grep -c exits 1 on a zero count, so it is
+          # guarded: under `set -e` a bare assignment would end the step silently.
+          select_named_policy() {
+            KIND=$1 NAME=$2 yq eval-all '
+              select(.kind == strenv(KIND) and .metadata.name == strenv(NAME))
+            ' "$3" > "$4"
+            count=$(grep -c "^kind: $1\$" "$4" || true)
+            [ "${count}" -eq 1 ] || {
+              echo "::error::expected exactly one $1 named $2, found ${count}; if Platform changed its kind, update this boundary check to match"
+              return 1
+            }
+          }
+
+          # Regression control for the selector itself: a policy name Platform
+          # does not ship must produce the diagnostic above, never a silent exit.
+          if select_named_policy ValidatingPolicy no-such-policy /dev/null missing-policy.yaml \
+              > missing-policy.out 2>&1; then
+            echo "::error::select_named_policy accepted a missing policy"
+            exit 1
+          fi
+          grep -Fq 'expected exactly one ValidatingPolicy named no-such-policy' missing-policy.out || {
+            cat missing-policy.out
+            echo "::error::select_named_policy failed without its missing-policy diagnostic"
+            exit 1
           }
 
           # check_set <name> <kustomize-dir> <require_pass>
@@ -551,13 +595,13 @@ jobs:
             name=$1 dir=$2 require_pass=$3
             kubectl kustomize "$dir" > "${name}-policies.yaml"
             filter_admission_rules "${name}-policies.yaml" > "${name}-admission.yaml"
-            if ! grep -q '^kind: ClusterPolicy' "${name}-admission.yaml"; then
-              echo "::notice::${name}: no admission-relevant ClusterPolicies to apply"
+            if ! grep -Eq '^kind: (ClusterPolicy|ValidatingPolicy)$' "${name}-admission.yaml"; then
+              echo "::notice::${name}: no admission-relevant validation policies to apply"
               return 0
             fi
             # --audit-warn: Audit-mode policies warn (they don't block admission);
             # --warn-exit-code 0 activates exit-1-on-failure/error while keeping
-            # warnings non-fatal — verified against kyverno CLI v1.18.2.
+            # warnings non-fatal — verified against kyverno CLI v1.19.1.
             ./kyverno apply "${name}-admission.yaml" --resource rendered.yaml \
               --audit-warn --warn-exit-code 0 2>&1 | tee "${name}-apply.out"
             if [ "${require_pass}" = "true" ]; then
@@ -575,23 +619,16 @@ jobs:
           # something, but tenant-scoped policies also need admission context.
           # Isolate the exact high-severity rule so unrelated policy passes can
           # never mask a skipped SecretStore boundary.
-          yq eval-all '
-            select(
-              .kind == "ClusterPolicy"
-              and .metadata.name == "restrict-tenant-secret-stores"
-            )
-          ' platform-policies.yaml > restrict-tenant-secret-stores.yaml
-          policy_count=$(grep -c '^kind: ClusterPolicy$' restrict-tenant-secret-stores.yaml)
-          [ "${policy_count}" -eq 1 ] || {
-            echo "::error::expected exactly one restrict-tenant-secret-stores policy, found ${policy_count}"
-            exit 1
-          }
+          select_named_policy ValidatingPolicy restrict-tenant-secret-stores \
+            platform-policies.yaml restrict-tenant-secret-stores.yaml
+          # The ExternalSecret check is identified by its denial message: a
+          # ValidatingPolicy's validations carry no rule names.
           yq eval -e '
-            [.spec.rules[].name
-              | select(. == "externalsecret-no-clustersecretstore")]
+            [.spec.validations[].message
+              | select(test("Tenant ExternalSecrets must reference"))]
             | length == 1
           ' restrict-tenant-secret-stores.yaml >/dev/null || {
-            echo "::error::restrict-tenant-secret-stores is missing its ExternalSecret rule"
+            echo "::error::restrict-tenant-secret-stores is missing its ExternalSecret check"
             exit 1
           }
 
@@ -669,6 +706,9 @@ jobs:
             case "${expected}" in
               pass) result='pass: [1-9][0-9]*, fail: 0, warn: 0, error: 0' ;;
               no-match) result='pass: 0, fail: 0, warn: 0, error: 0, skip: 0' ;;
+              # A CEL policy reports a request its matchConditions exclude
+              # as exactly one skip, distinct from a namespace that never matched.
+              excluded) result='pass: 0, fail: 0, warn: 0, error: 0, skip: 1' ;;
               *) echo "::error::unknown expected result: ${expected}"; return 1 ;;
             esac
             grep -Eq "${result}" "${case_name}.out" || {
@@ -688,7 +728,7 @@ jobs:
             fi
             if ! grep -Fq 'policy restrict-tenant-secret-stores' \
                 "${case_name}.out" ||
-              ! grep -Fq 'externalsecret-no-clustersecretstore' \
+              ! grep -Fq 'Tenant ExternalSecrets must reference' \
                 "${case_name}.out" ||
               ! grep -Eq 'pass: 0, fail: [1-9][0-9]*, warn: 0, error: 0' \
                 "${case_name}.out"; then
@@ -710,7 +750,9 @@ jobs:
             tenant-clustersecretstore.yaml \
             --values-file unmanaged-values.yaml \
             --userinfo tenant-user-info.yaml
-          expect_secretstore_allowed platform-mutant no-match \
+          # Platform-applied resources are carved out by the policy's
+          # not-platform-applied match condition, so the CLI reports one skip.
+          expect_secretstore_allowed platform-mutant excluded \
             tenant-clustersecretstore.yaml \
             --values-file tenant-values.yaml \
             --userinfo platform-user-info.yaml
@@ -735,7 +777,9 @@ jobs:
               and .metadata.name == "restrict-tenant-network-policies"
             )
           ' platform-policies.yaml > restrict-tenant-network-policies.yaml
-          policy_count=$(grep -c '^kind: ClusterPolicy$' restrict-tenant-network-policies.yaml)
+          # grep -c exits 1 on a zero count; guard it so a missing policy reaches
+          # the diagnostic below instead of ending the step silently under set -e.
+          policy_count=$(grep -c '^kind: ClusterPolicy$' restrict-tenant-network-policies.yaml || true)
           [ "${policy_count}" -eq 1 ] || {
             echo "::error::expected exactly one restrict-tenant-network-policies policy, found ${policy_count}"
             exit 1
