@@ -128,7 +128,7 @@ jobs:
                 .id == "apply-admission-policies"
                 and ((.run | split("restrict-tenant-secret-stores") | length) == 7)
                 and ((.run | split("Tenant ExternalSecrets must reference") | length) == 3)
-                and ((.run | split("select_named_policy restrict-tenant-secret-stores") | length) == 2)
+                and ((.run | split("select_named_policy ValidatingPolicy restrict-tenant-secret-stores") | length) == 2)
                 and ((.run | split("ValidatingPolicy") | length) == 9)
                 and ((.run | split("no-such-policy") | length) == 3)
                 and ((.run | split("platform-mutant excluded") | length) == 2)
@@ -462,8 +462,9 @@ jobs:
   # Only the validation kinds Platform runs at admission are applied:
   # `ClusterPolicy` and its CEL successor `ValidatingPolicy`. Platform is moving
   # policies from one to the other, so selecting a single kind would silently drop
-  # every moved rule; a named policy is selected as either kind for the same
-  # reason. The platform also ships CEL
+  # every moved rule. Each isolated boundary check instead names the one kind its
+  # assertions are written for, so a policy that changes kind fails that check
+  # with a diagnostic rather than being half-proved. The platform also ships CEL
   # `ImageValidatingPolicy` resources (`verify-app-images`, `verify-ksail-images`),
   # and `verify-app-images` IS Deny-mode over every `ghcr.io/devantler-tech/*`
   # tenant image — so this gate deliberately does not cover the one policy class
@@ -554,33 +555,31 @@ jobs:
             ' "$1"
           }
 
-          # select_named_policy <name> <source> <destination>
-          # Writes the one admission validation policy of that name, whichever
-          # kind Platform currently ships it as, and fails with a diagnostic when
-          # there is not exactly one. grep -c exits 1 on a zero count, so it is
+          # select_named_policy <kind> <name> <source> <destination>
+          # Writes the one policy of that kind and name, and fails with a
+          # diagnostic when there is not exactly one — including when Platform
+          # has moved it to another kind, which the caller's assertions would
+          # then no longer fit. grep -c exits 1 on a zero count, so it is
           # guarded: under `set -e` a bare assignment would end the step silently.
           select_named_policy() {
-            NAME=$1 yq eval-all '
-              select(
-                (.kind == "ClusterPolicy" or .kind == "ValidatingPolicy")
-                and .metadata.name == strenv(NAME)
-              )
-            ' "$2" > "$3"
-            count=$(grep -Ec '^kind: (ClusterPolicy|ValidatingPolicy)$' "$3" || true)
+            KIND=$1 NAME=$2 yq eval-all '
+              select(.kind == strenv(KIND) and .metadata.name == strenv(NAME))
+            ' "$3" > "$4"
+            count=$(grep -c "^kind: $1\$" "$4" || true)
             [ "${count}" -eq 1 ] || {
-              echo "::error::expected exactly one $1 policy (ClusterPolicy or ValidatingPolicy), found ${count}"
+              echo "::error::expected exactly one $1 named $2, found ${count}; if Platform changed its kind, update this boundary check to match"
               return 1
             }
           }
 
           # Regression control for the selector itself: a policy name Platform
           # does not ship must produce the diagnostic above, never a silent exit.
-          if select_named_policy no-such-policy /dev/null missing-policy.yaml \
+          if select_named_policy ValidatingPolicy no-such-policy /dev/null missing-policy.yaml \
               > missing-policy.out 2>&1; then
             echo "::error::select_named_policy accepted a missing policy"
             exit 1
           fi
-          grep -Fq 'expected exactly one no-such-policy policy' missing-policy.out || {
+          grep -Fq 'expected exactly one ValidatingPolicy named no-such-policy' missing-policy.out || {
             cat missing-policy.out
             echo "::error::select_named_policy failed without its missing-policy diagnostic"
             exit 1
@@ -620,7 +619,7 @@ jobs:
           # something, but tenant-scoped policies also need admission context.
           # Isolate the exact high-severity rule so unrelated policy passes can
           # never mask a skipped SecretStore boundary.
-          select_named_policy restrict-tenant-secret-stores \
+          select_named_policy ValidatingPolicy restrict-tenant-secret-stores \
             platform-policies.yaml restrict-tenant-secret-stores.yaml
           # The ExternalSecret check is identified by its denial message: a
           # ValidatingPolicy's validations carry no rule names.
