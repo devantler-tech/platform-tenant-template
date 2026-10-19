@@ -481,8 +481,8 @@ jobs:
     permissions:
       contents: read # checkouts
     env:
-      KYVERNO_CLI_VERSION: v1.18.2
-      KYVERNO_CLI_SHA256: cb2feb8356149fd2fe774c894ccf0969f4a60a83867dd913af724f74ffbbc18b
+      KYVERNO_CLI_VERSION: v1.19.1
+      KYVERNO_CLI_SHA256: b38228f367fc0fdc2b08f4c83ea50ac5f16c60ff8d62d76a66157c33c47b70ae
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
