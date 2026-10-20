@@ -8,17 +8,15 @@ repo_root=$(dirname -- "$script_dir")
 publish_workflow=$repo_root/.github/workflows/cd.yaml
 # Shape, not a specific revision: the producer identity and the requirement that
 # it stay SHA-pinned are the contract; which SHA is Dependabot's business.
-expected_publish_workflow='^devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
+expected_publish_workflow='^devantler-tech/(actions|\.github)/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
 # This is the literal GitHub Actions expression the reusable workflow consumes.
 # shellcheck disable=SC2016
 expected_publish_app_name='${{ github.event.repository.name }}'
 expected_oidc_issuer='^https://token\.actions\.githubusercontent\.com$'
-# Platform's trust rule for tenant release streams, and pinning it here is the
-# security property: it accepts only the shared actions workflow signed from a
-# 40-hex commit SHA — no tag, no branch, no wildcard — so every other ref form fails
-# to verify. The tenant ResourceGraphDefinition every new tenant inherits declares
-# this rule verbatim, so it is compared verbatim.
-expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
+# The generic KRO rule may retain its existing legacy full-SHA pattern, but any
+# maintained publisher must name one or two literal reviewed commits. The
+# starter's complete pinned caller identity must match this rule.
+publisher_identity=''
 # A manually declared tenant's own OCIRepository is narrower: platform writes an
 # explicit alternation of its approved publish-app.yaml revisions (full 40-hex SHAs)
 # from scripts/publish-workflow-approved-revisions.tsv. Which SHAs is platform's
@@ -27,7 +25,7 @@ expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/work
 # and maintained locations. Parse those literal forms below, rather than treating
 # the subject itself as an executable regex or pinning one incidental text shape.
 export expected_publish_workflow expected_publish_app_name
-export expected_oidc_issuer expected_oidc_subject
+export expected_oidc_issuer
 
 fail() {
 	echo "FAIL: $*" >&2
@@ -55,8 +53,19 @@ validate_revision_group() (
 	'
 )
 
-validate_manual_oidc_subject() (
+validate_legacy_revision_group() (
+	ref=$1
+	scope=$2
+	if [ "$scope" = generic ] && [ "$ref" = '[0-9a-f]{40}' ]; then
+		exit 0
+	fi
+	validate_revision_group "$ref" 3
+)
+
+validate_oidc_subject() (
 	subject=$1
+	scope=$2
+	case "$scope" in manual|generic) ;; *) exit 1 ;; esac
 	prefix='^https://github\.com/devantler-tech/'
 	legacy='actions/\.github/workflows/publish-app\.yaml@'
 	canonical='\.github/\.github/workflows/publish-app\.yaml@'
@@ -64,7 +73,7 @@ validate_manual_oidc_subject() (
 		"$prefix$legacy"*'$')
 			ref=${subject#"$prefix$legacy"}
 			ref=${ref%'$'}
-			validate_revision_group "$ref" 3
+			validate_legacy_revision_group "$ref" "$scope"
 			;;
 		"$prefix("*')$')
 			pair=${subject#"$prefix("}
@@ -74,7 +83,7 @@ validate_manual_oidc_subject() (
 			refs=${pair#"$legacy"}
 			legacy_ref=${refs%%"$separator"*}
 			canonical_ref=${refs#*"$separator"}
-			validate_revision_group "$legacy_ref" 3 && validate_revision_group "$canonical_ref" 2
+			validate_legacy_revision_group "$legacy_ref" "$scope" && validate_revision_group "$canonical_ref" 2
 			;;
 		*) exit 1 ;;
 	esac
@@ -83,6 +92,8 @@ validate_manual_oidc_subject() (
 validate_publish_workflow() {
 	workflow_file=$1
 	[ -f "$workflow_file" ] || fail "tenant publish workflow is missing: $workflow_file"
+	yq eval-all -e '[.] | length == 1' "$workflow_file" >/dev/null ||
+		fail "tenant publish workflow must contain exactly one YAML document"
 
 	# The tag-only tenant job is the producer identity Platform's OCIRepository
 	# accepts. Keep its authority both minimal and immutable.
@@ -101,11 +112,14 @@ validate_publish_workflow() {
 		and .jobs.publish.permissions.contents == "read"
 		and .jobs.publish.permissions.packages == "write"
 		and .jobs.publish.permissions."id-token" == "write"
+		and (.jobs.publish.uses | tag == "!!str")
+		and (.jobs.publish.uses | test("[[:space:][:cntrl:]]") | not)
 		and (.jobs.publish.uses | test(strenv(expected_publish_workflow)))
 		and .jobs.publish.with."app-name" == strenv(expected_publish_app_name)
 		and .jobs.publish.with."enable-caller-pin" == true
 	' "$workflow_file" >/dev/null ||
 		fail "tenant publish workflow no longer has the pinned minimal signing contract"
+	publisher_identity="https://github.com/$(yq eval -r '.jobs.publish.uses' "$workflow_file")"
 }
 
 validate_openbao_authorization() (
@@ -218,6 +232,8 @@ validate_platform() {
 		[ -f "$required_file" ] || fail "Platform tenant-envelope source is missing: $required_file"
 	done
 
+	yq eval-all -e '[.] | length == 1' "$rgd" >/dev/null ||
+		fail "Platform KRO Tenant must contain exactly one YAML document"
 	# shellcheck disable=SC2016
 	yq eval -e '
 		(.spec.resources[] | select(.id == "tenantNamespace").template) as $namespace
@@ -267,7 +283,8 @@ validate_platform() {
 		and ($ociRepository.spec.verify | has("secretRef") | not)
 		and ($ociRepository.spec.verify.matchOIDCIdentity | length) == 1
 		and $ociRepository.spec.verify.matchOIDCIdentity[0].issuer == strenv(expected_oidc_issuer)
-		and $ociRepository.spec.verify.matchOIDCIdentity[0].subject == strenv(expected_oidc_subject)
+		and ($ociRepository.spec.verify.matchOIDCIdentity[0].subject | tag == "!!str")
+		and ($ociRepository.spec.verify.matchOIDCIdentity[0].subject | test("[[:space:][:cntrl:]]") | not)
 		and $roleBinding.kind == "RoleBinding"
 		and $roleBinding.metadata.name == "${schema.spec.name}"
 		and $roleBinding.metadata.namespace == "${tenantNamespace.metadata.name}"
@@ -295,6 +312,12 @@ validate_platform() {
 		and ($kustomizationSops.spec.sourceRef | has("namespace") | not)
 		and $kustomizationSops.spec.targetNamespace == "${tenantNamespace.metadata.name}")
 	' "$rgd" >/dev/null || fail "Platform KRO Tenant no longer provides the required namespace, RBAC, and Flux envelope"
+	generic_subject=$(yq eval -r '.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject' "$rgd")
+	validate_oidc_subject "$generic_subject" generic ||
+		fail "Platform KRO Tenant OCI subject is not an anchored app-publisher rule"
+	[ -n "$publisher_identity" ] || fail "starter publisher must be validated before its Platform consumer"
+	printf '%s\n' "$publisher_identity" | grep -Eq -- "$generic_subject" ||
+		fail "Platform KRO Tenant does not accept the starter's exact pinned publisher"
 
 	tenant_name=$(yq eval -r '.metadata.name // ""' "$manual_namespace")
 	[ -n "$tenant_name" ] || fail "manual Platform tenant namespace has no name"
@@ -358,7 +381,7 @@ validate_platform() {
 		and (.spec.verify.matchOIDCIdentity[0].subject | test("[[:space:][:cntrl:]]") | not)
 	' "$manual_oci_repository" >/dev/null || fail "manual Platform tenant OCI source no longer requires the signed private artifact"
 	manual_subject=$(yq eval -r '.spec.verify.matchOIDCIdentity[0].subject' "$manual_oci_repository")
-	validate_manual_oidc_subject "$manual_subject" ||
+	validate_oidc_subject "$manual_subject" manual ||
 		fail "manual Platform tenant OCI subject is not an anchored, narrow app-publisher writer form"
 
 	# shellcheck disable=SC2016
@@ -625,6 +648,119 @@ run_manual_subject_control 'trailing newline after pair end anchor' \
 run_manual_subject_control 'canonical-only form not emitted by writer' \
 	"${control_prefix}${control_canonical}${control_b}\$" reject
 
+# Exercise the actual caller and KRO consumer together. A well-formed signer
+# expression still fails if it does not accept the caller's full identity.
+producer_controls_run=0
+run_producer_control() {
+	description=$1
+	control_subject=$2
+	control_caller=$3
+	expected_result=$4
+	control=$mutation_dir/producer-control
+	rm -rf "$control"
+	cp -R "$baseline" "$control"
+	SUBJECT_CONTROL=$control_subject yq eval \
+		'(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) = strenv(SUBJECT_CONTROL)' \
+		"$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
+	mv "$mutation_dir/producer-control.yaml" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
+	CALLER_CONTROL=$control_caller yq eval '.jobs.publish.uses = strenv(CALLER_CONTROL)' \
+		"$publish_workflow" > "$mutation_dir/producer-cd.yaml"
+	case "${5:-}" in
+		workflow-document) printf '\n---\n{}\n' >> "$mutation_dir/producer-cd.yaml" ;;
+		platform-document) printf '\n---\n{}\n' >> "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" ;;
+		null-subject|nul-subject)
+			if [ "$5" = null-subject ]; then
+				expression='(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) = null'
+			else
+				expression='(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) += "\u0000"'
+			fi
+			yq eval "$expression" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
+			mv "$mutation_dir/producer-control.yaml" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
+			;;
+		null-caller|nul-caller)
+			if [ "$5" = null-caller ]; then
+				expression='.jobs.publish.uses = null'
+			else
+				expression='.jobs.publish.uses += "\u0000"'
+			fi
+			yq eval "$expression" "$mutation_dir/producer-cd.yaml" > "$mutation_dir/producer-cd-mutant.yaml"
+			mv "$mutation_dir/producer-cd-mutant.yaml" "$mutation_dir/producer-cd.yaml"
+			;;
+		'') ;;
+		*) fail "unknown producer-control mutation" ;;
+	esac
+	result=reject
+	if (validate_publish_workflow "$mutation_dir/producer-cd.yaml"; validate_platform "$control") >/dev/null 2>&1; then
+		result=accept
+	fi
+	[ "$result" = "$expected_result" ] || fail "producer control failed: $description ($result)"
+	producer_controls_run=$((producer_controls_run + 1))
+}
+
+control_legacy_caller=devantler-tech/actions/.github/workflows/publish-app.yaml@$control_a
+control_maintained_caller=devantler-tech/.github/.github/workflows/publish-app.yaml@$control_b
+control_generic_legacy="${control_prefix}${control_legacy}[0-9a-f]{40}\$"
+control_generic_transition="${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}${control_b})\$"
+run_producer_control 'current generic legacy rule accepts a pinned legacy caller' \
+	"$control_generic_legacy" "$control_legacy_caller" accept
+run_producer_control 'transition retains the pinned legacy caller' \
+	"$control_generic_transition" "$control_legacy_caller" accept
+run_producer_control 'transition accepts its exact maintained caller' \
+	"$control_generic_transition" "$control_maintained_caller" accept
+run_producer_control 'two exact maintained revisions' \
+	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}(${control_b}|${control_c}))\$" \
+	"$control_maintained_caller" accept
+run_producer_control 'fully literal transition' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$" \
+	"$control_maintained_caller" accept
+run_producer_control 'maintained caller without maintained authorization' \
+	"$control_generic_legacy" "$control_maintained_caller" reject
+run_producer_control 'maintained caller at an unapproved revision' \
+	"$control_generic_transition" "devantler-tech/.github/.github/workflows/publish-app.yaml@$control_d" reject
+run_producer_control 'legacy caller at an unapproved literal revision' \
+	"${control_prefix}${control_legacy}${control_c}\$" "$control_legacy_caller" reject
+run_producer_control 'maintained wildcard' \
+	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}[0-9a-f]{40})\$" \
+	"$control_maintained_caller" reject
+run_producer_control 'maintained tag' \
+	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}v7.23.0)\$" \
+	"$control_maintained_caller" reject
+run_producer_control 'third maintained revision' \
+	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}(${control_b}|${control_c}|${control_d}))\$" \
+	"$control_maintained_caller" reject
+run_producer_control 'duplicate maintained revision' \
+	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}(${control_b}|${control_b}))\$" \
+	"$control_maintained_caller" reject
+run_producer_control 'legacy short identifier pattern' \
+	"${control_prefix}(${control_legacy}[0-9a-f]{7,40}|${control_canonical}${control_b})\$" \
+	"$control_maintained_caller" reject
+run_producer_control 'different maintained workflow' \
+	"${control_prefix}(${control_legacy}[0-9a-f]{40}|\\.github/\\.github/workflows/publish-manifests\\.yaml@${control_b})\$" \
+	"$control_maintained_caller" reject
+run_producer_control 'ungrouped producer locations' \
+	"${control_prefix}${control_legacy}[0-9a-f]{40}|${control_canonical}${control_b}\$" \
+	"$control_maintained_caller" reject
+run_producer_control 'trailing newline in generic subject' \
+	"${control_generic_transition}${control_newline}" "$control_maintained_caller" reject
+run_producer_control 'lookalike caller repository' \
+	"$control_generic_transition" "devantler-tech/another/.github/workflows/publish-app.yaml@$control_b" reject
+run_producer_control 'mutable maintained caller' \
+	"$control_generic_transition" 'devantler-tech/.github/.github/workflows/publish-app.yaml@main' reject
+run_producer_control 'caller contains a trailing newline' \
+	"$control_generic_transition" "${control_maintained_caller}${control_newline}" reject
+run_producer_control 'second workflow document' \
+	"$control_generic_transition" "$control_maintained_caller" reject workflow-document
+run_producer_control 'second KRO document' \
+	"$control_generic_transition" "$control_maintained_caller" reject platform-document
+run_producer_control 'null generic subject' \
+	"$control_generic_transition" "$control_maintained_caller" reject null-subject
+run_producer_control 'NUL in generic subject' \
+	"$control_generic_transition" "$control_maintained_caller" reject nul-subject
+run_producer_control 'null publisher caller' \
+	"$control_generic_transition" "$control_maintained_caller" reject null-caller
+run_producer_control 'NUL in publisher caller' \
+	"$control_generic_transition" "$control_maintained_caller" reject nul-caller
+
 rgd_path=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
 manual_path=k8s/bases/apps/ascoachingogvaner
 run_vault_mutation "tenant data path widened" \
@@ -740,9 +876,7 @@ run_mutation "manual OCI subject contains a NUL byte" "$manual_path/oci-reposito
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$\u0000"'
 run_mutation "manual OCI key verification override added" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.secretRef.name) = "alternate-cosign-key"'
-# The subject is compared verbatim, so every widening of its ref half or producer
-# identity must fail. Each is a ref form cosign would happily verify against a
-# mutable target or a foreign producer, which is precisely what the rule forbids.
+# The narrow subject parser must reject mutable refs and foreign producers.
 run_mutation "manual OCI subject ref floated to a tag" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@v1\.2\.3$"'
 run_mutation "manual OCI subject ref floated to a branch" "$manual_path/oci-repository.yaml" \
@@ -810,4 +944,4 @@ run_publish_mutation "caller SHA-pin enforcement removed" \
 run_publish_mutation "caller SHA-pin enforcement disabled" \
 	'.jobs.publish.with."enable-caller-pin" = false'
 
-echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations + ${subject_controls_run} subject controls)"
+echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations + ${subject_controls_run} subject controls + ${producer_controls_run} producer controls)"
