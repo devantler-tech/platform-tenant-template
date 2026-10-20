@@ -91,7 +91,9 @@ spec:
         # publish-app pins the freshly built image digest into the container
         # with this name. Rename `app` to your repo name throughout this file.
         - name: app
-          image: ghcr.io/devantler-tech/REPLACE_ME:latest
+          # Placeholder only: publish-app replaces it with the built image digest
+          # before deployment. An explicit version also passes scaffold admission.
+          image: ghcr.io/devantler-tech/REPLACE_ME:0.0.0
           ports:
             - containerPort: 3000
           env:
