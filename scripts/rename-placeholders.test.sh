@@ -75,6 +75,21 @@ homepage_route_contract() {
 homepage_route_contract "$deploy/httproute.yaml" ||
 	fail "scaffold HTTPRoute does not expose the complete Homepage discovery contract"
 
+# Publication replaces this explicit placeholder with the built digest. Even the
+# unrenamed scaffold must not rely on a mutable latest tag to pass admission.
+scaffold_image_contract() {
+	yq eval -e '.spec.template.spec.containers[0].image == "ghcr.io/devantler-tech/REPLACE_ME:0.0.0"' "$1" >/dev/null 2>&1
+}
+scaffold_image_contract "$deploy/deployment.yaml" ||
+	fail "scaffold image must use its explicit versioned placeholder"
+for bad_image in ghcr.io/devantler-tech/REPLACE_ME:latest ghcr.io/devantler-tech/REPLACE_ME ghcr.io/another/REPLACE_ME:0.0.0; do
+	mutant="${work}/image-mutant.yaml"
+	BAD_IMAGE="$bad_image" yq eval '.spec.template.spec.containers[0].image = strenv(BAD_IMAGE)' "$deploy/deployment.yaml" > "$mutant"
+	if scaffold_image_contract "$mutant"; then
+		fail "image contract accepted $bad_image"
+	fi
+done
+
 for annotation in href pod-selector; do
 	mutant="${work}/homepage-${annotation}-mutant.yaml"
 	yq eval "del(.metadata.annotations.\"gethomepage.dev/${annotation}\")" \
@@ -116,7 +131,7 @@ mv "$deploy/httproute-with-custom.yaml" "$deploy/httproute.yaml"
 all="$(cat "$deploy"/*.yaml)"
 
 # 1) REPLACE_ME fully repointed (container image + OpenBao KV path); none remain.
-printf '%s\n' "$all" | grep -qF "ghcr.io/devantler-tech/${NAME}:latest" ||
+printf '%s\n' "$all" | grep -qF "ghcr.io/devantler-tech/${NAME}:0.0.0" ||
 	fail "container image REPLACE_ME not repointed to ${NAME}"
 printf '%s\n' "$all" | grep -qF "apps/${NAME}/config" ||
 	fail "OpenBao KV path REPLACE_ME not repointed to ${NAME}"
