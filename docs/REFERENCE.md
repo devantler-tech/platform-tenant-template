@@ -147,6 +147,17 @@ record, with at most two distinct reviewed commits during a transition; legacy
 approvals do not authorize it. Merge and verify the corresponding Platform
 approval and image/manifest verification policy before changing a tenant caller.
 
+The live envelope check accepts the manual tenant matcher's strict writer forms:
+one to three distinct legacy commit IDs, optionally paired with one or two
+distinct maintained commit IDs. Both locations must name the same app publisher,
+all IDs must be full lowercase commit IDs, and the whole subject must be anchored.
+Its controls exercise copies of the Platform envelope and reject mutable refs,
+wildcards, wrong producers, duplicate IDs and excess approvals. This checks the
+writer's narrow shape; Platform still owns which exact revisions are approved.
+The starter caller and generic KRO subject remain on their current legacy
+identity until their coordinated migration; accepting a manual writer form does
+not activate a maintained publisher or authorize a tenant's caller pin.
+
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
 > name (`app-name: ${{ github.event.repository.name }}` in `cd.yaml`).
