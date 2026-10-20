@@ -55,7 +55,7 @@ the template excludes, add the line `!<entry>` to your list.
 | `CLAUDE.md` | `@AGENTS.md` shim |
 | `docs/REFERENCE.md` | This reference |
 | `scripts/workflow-caller-pin-contract.test.sh` | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
-| `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` | The check a tenant's required CI runs to refuse a moved `publish-app.yaml` pin until the platform's approved set lists it for that tenant, so a dependency PR waits instead of shipping a release the platform cannot deploy. The default `ci.yaml` a new tenant starts from runs it as the `publish-pin-approved` job and lists that job in `ci-required-checks`; the template repository runs only its tests, because it is not a registered tenant. Older tenants that own their `ci.yaml` add the same job themselves |
+| `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` | The check a tenant's required CI runs to refuse a changed publisher identity until Platform approves it for that tenant. Legacy revisions use the existing approved set; maintained publishers require an exact canonical approval. The default `ci.yaml` runs the `publish-pin-approved` job and includes it in `ci-required-checks`; this unregistered template runs its tests only. Older tenants that own `ci.yaml` add the job themselves |
 | `zizmor.yml` | GitHub Actions pinning policy enforced by the security scan |
 
 **Scaffold-time only (arrives when the repo is created — never re-synced, so a
@@ -137,6 +137,15 @@ only artifacts from this trusted workflow are eligible for reconciliation after
 the platform has registered the tenant and its applicable publisher-approval
 checks pass. Workflow configuration alone does not prove that publication or
 reconciliation succeeded.
+
+Before moving a publisher between repositories, merge and template-sync the
+approval check first. CI executes the check from the base revision so the
+repoint cannot authorize itself. The same commit identifier in another
+repository is a changed identity, not an unchanged pin. Maintained publishing
+requires the tenant's exact `publish-app` approval in Platform's canonical
+record, with at most two distinct reviewed commits during a transition; legacy
+approvals do not authorize it. Merge and verify the corresponding Platform
+approval and image/manifest verification policy before changing a tenant caller.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
