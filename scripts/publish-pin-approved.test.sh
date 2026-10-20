@@ -24,7 +24,7 @@ cd_file() {
 name: CD
 jobs:
   publish:
-    uses: devantler-tech/actions/.github/workflows/publish-app.yaml@$2 # v13.6.5
+    uses: devantler-tech/${3:-actions}/.github/workflows/publish-app.yaml@$2 # fixture
 EOF
 }
 
@@ -43,13 +43,19 @@ row() {
 		"$1" "$tab" "$tab" "$tab" "$tab" "$2" "$tab" "$3" "$tab" "$4" "$tab"
 }
 
-# expect <name> <exit> <text> <set> <head-pin> [consumer]
+canonical_file() {
+	printf 'consumer\tworkflow\trepository\tcommit\n' >"$work/canonical.tsv"
+	for canonical_row in "$@"; do printf '%s\n' "$canonical_row" >>"$work/canonical.tsv"; done
+}
+canonical_row() { printf '%s\tpublish-app\tdevantler-tech/.github\t%s' "$1" "$2"; }
+
+# expect <name> <exit> <text> <set> <head-pin> [consumer] [head-family] [base-family]
 expect() {
 	name=$1 want_status=$2 want_text=$3 set=$4 head=$5 consumer=${6:-example-tenant}
-	cd_file base.yaml "$main_pin"
-	cd_file head.yaml "$head"
+	cd_file base.yaml "$main_pin" "${8:-actions}"
+	cd_file head.yaml "$head" "${7:-actions}"
 	status=0
-	output=$(PUBLISH_PIN_CONSUMER=$consumer PUBLISH_PIN_APPROVED_SET=$set \
+	output=$(PUBLISH_PIN_CONSUMER=$consumer PUBLISH_PIN_APPROVED_SET=$set PUBLISH_PIN_CANONICAL_SET=$work/canonical.tsv \
 		sh "$subject" "$work/base.yaml" "$work/head.yaml" 2>&1) || status=$?
 	if [ "$status" -eq "$want_status" ] && printf '%s\n' "$output" | grep -Fq -- "$want_text"; then
 		pass=$((pass + 1))
@@ -111,6 +117,52 @@ else
 	printf 'FAIL: a bare SHA is not a publish-app.yaml pin (exit %s)\n%s\n' "$status" "$output" >&2
 	failures=$((failures + 1))
 fi
+
+# Multiple valid documents used to pass a line-oriented grep and select the last
+# approved SHA, rather than proving one complete publisher identity.
+cd_file base.yaml "$main_pin"
+cd_file head.yaml "$main_pin"
+printf '\n---\n' >>"$work/head.yaml"
+cd_file second.yaml "$candidate"
+cat "$work/second.yaml" >>"$work/head.yaml"
+status=0
+output=$(PUBLISH_PIN_CONSUMER=example-tenant PUBLISH_PIN_APPROVED_SET=$work/ok.tsv \
+	sh "$subject" "$work/base.yaml" "$work/head.yaml" 2>&1) || status=$?
+if [ "$status" -eq 1 ] && printf '%s\n' "$output" | grep -Fq 'exactly one'; then
+	pass=$((pass + 1))
+else
+	printf 'FAIL: multiple publisher documents were accepted or misdiagnosed\n%s\n' "$output" >&2
+	failures=$((failures + 1))
+fi
+
+canonical_file "$(canonical_row example-tenant "$candidate")" "$(canonical_row other-tenant "$unapproved")"
+expect 'an explicitly approved canonical publisher passes' 0 'is approved for example-tenant' "$work/missing.tsv" "$candidate" example-tenant .github
+expect 'another canonical tenant does not approve this one' 1 'not in the canonical approvals for example-tenant' "$work/ok.tsv" "$unapproved" example-tenant .github
+expect 'same SHA in another repository is not an unchanged identity' 1 'not in the canonical approvals for example-tenant' "$work/ok.tsv" "$main_pin" example-tenant .github
+expect 'an unchanged canonical identity needs no lookup' 0 'unchanged' "$work/missing.tsv" "$main_pin" example-tenant .github .github
+expect 'an unknown publisher family is rejected' 1 'to a commit SHA' "$work/ok.tsv" "$candidate" example-tenant .github-evil
+
+canonical_file "$(canonical_row example-tenant "$candidate")" "$(canonical_row example-tenant "$main_pin")"
+expect 'two distinct reviewed canonical revisions may overlap' 0 'is approved' "$work/missing.tsv" "$main_pin" example-tenant .github
+canonical_file "$(canonical_row example-tenant "$candidate")" "$(canonical_row example-tenant "$main_pin")" "$(canonical_row example-tenant "$applied")"
+expect 'a third canonical approval is rejected' 1 'at most two' "$work/ok.tsv" "$candidate" example-tenant .github
+canonical_file "$(canonical_row example-tenant "$candidate")" "$(canonical_row example-tenant "$candidate")"
+expect 'a repeated canonical commit is rejected' 1 'duplicate canonical commit' "$work/ok.tsv" "$candidate" example-tenant .github
+
+canonical_file "example-tenant${tab}publish-app${tab}another/repository${tab}${candidate}"
+expect 'another repository cannot approve a canonical identity' 1 'malformed canonical approval' "$work/ok.tsv" "$candidate" example-tenant .github
+canonical_file "example-tenant${tab}publish-manifests${tab}devantler-tech/.github${tab}${candidate}"
+expect 'another workflow cannot approve a canonical identity' 1 'malformed canonical approval' "$work/ok.tsv" "$candidate" example-tenant .github
+canonical_file "$(canonical_row example-tenant v7.22.0)"
+expect 'a floating canonical revision is rejected' 1 'malformed canonical approval' "$work/ok.tsv" "$candidate" example-tenant .github
+canonical_file "$(canonical_row other-tenant "$candidate")"
+expect 'a missing canonical consumer is rejected' 1 'not in the canonical approvals for example-tenant' "$work/ok.tsv" "$candidate" example-tenant .github
+printf 'consumer\tworkflow\tcommit\tcommit\nexample-tenant\tpublish-app\t%s\t%s\n' "$candidate" "$candidate" >"$work/canonical.tsv"
+expect 'a duplicated canonical header is rejected' 1 'canonical approval header' "$work/ok.tsv" "$candidate" example-tenant .github
+printf 'commit\trepository\tworkflow\tconsumer\n%s\tdevantler-tech/.github\tpublish-app\texample-tenant\n' "$candidate" >"$work/canonical.tsv"
+expect 'canonical columns are bound by header, not position' 0 'is approved' "$work/missing.tsv" "$candidate" example-tenant .github
+rm "$work/canonical.tsv"
+expect 'an unreadable canonical set fails closed' 1 'could not read' "$work/ok.tsv" "$candidate" example-tenant .github
 
 printf 'publish-pin-approved: %s passed, %s failed\n' "$pass" "$failures"
 completed=1
