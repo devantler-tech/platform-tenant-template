@@ -23,16 +23,62 @@ expected_oidc_subject='^https://github\.com/devantler-tech/actions/\.github/work
 # explicit alternation of its approved publish-app.yaml revisions (full 40-hex SHAs)
 # from scripts/publish-workflow-approved-revisions.tsv. Which SHAs is platform's
 # business; that the subject names only full SHAs, and no wildcard, is the contract.
-# One approved revision is written bare and several as a parenthesised group; an
-# ungrouped alternation is refused, because its anchors would bind only the ends.
-expected_manual_oidc_subject_shape='^\^https://github\\\.com/devantler-tech/actions/\\\.github/workflows/publish-app\\\.yaml@(?:[0-9a-f]{40}|\((?:[0-9a-f]{40})(?:\|[0-9a-f]{40})+\))\$$'
+# The writer emits a legacy-only subject or a fully anchored pair of the legacy
+# and maintained locations. Parse those literal forms below, rather than treating
+# the subject itself as an executable regex or pinning one incidental text shape.
 export expected_publish_workflow expected_publish_app_name
-export expected_oidc_issuer expected_oidc_subject expected_manual_oidc_subject_shape
+export expected_oidc_issuer expected_oidc_subject
 
 fail() {
 	echo "FAIL: $*" >&2
 	exit 1
 }
+
+validate_revision_group() (
+	ref=$1
+	maximum=$2
+	minimum=1
+	case "$ref" in
+		'('*')') ref=${ref#\(}; ref=${ref%\)}; minimum=2 ;;
+		*'|'*) exit 1 ;;
+	esac
+	# No regex metacharacters survive: only distinct, literal full commit IDs.
+	printf '%s\n' "$ref" | awk -v minimum="$minimum" -v maximum="$maximum" '
+		{
+			count = split($0, revisions, "\\|")
+			if (count < minimum || count > maximum) exit 1
+			for (i = 1; i <= count; i++) {
+				if (length(revisions[i]) != 40 || revisions[i] !~ /^[0-9a-f]+$/ || seen[revisions[i]]++) exit 1
+			}
+		}
+		END { if (NR != 1) exit 1 }
+	'
+)
+
+validate_manual_oidc_subject() (
+	subject=$1
+	prefix='^https://github\.com/devantler-tech/'
+	legacy='actions/\.github/workflows/publish-app\.yaml@'
+	canonical='\.github/\.github/workflows/publish-app\.yaml@'
+	case "$subject" in
+		"$prefix$legacy"*'$')
+			ref=${subject#"$prefix$legacy"}
+			ref=${ref%'$'}
+			validate_revision_group "$ref" 3
+			;;
+		"$prefix("*')$')
+			pair=${subject#"$prefix("}
+			pair=${pair%')$'}
+			separator="|$canonical"
+			case "$pair" in "$legacy"*"$separator"*) ;; *) exit 1 ;; esac
+			refs=${pair#"$legacy"}
+			legacy_ref=${refs%%"$separator"*}
+			canonical_ref=${refs#*"$separator"}
+			validate_revision_group "$legacy_ref" 3 && validate_revision_group "$canonical_ref" 2
+			;;
+		*) exit 1 ;;
+	esac
+)
 
 validate_publish_workflow() {
 	workflow_file=$1
@@ -308,8 +354,11 @@ validate_platform() {
 		and (.spec.verify | has("secretRef") | not)
 		and (.spec.verify.matchOIDCIdentity | length) == 1
 		and .spec.verify.matchOIDCIdentity[0].issuer == strenv(expected_oidc_issuer)
-		and (.spec.verify.matchOIDCIdentity[0].subject | test(strenv(expected_manual_oidc_subject_shape)))
+		and (.spec.verify.matchOIDCIdentity[0].subject | tag == "!!str")
 	' "$manual_oci_repository" >/dev/null || fail "manual Platform tenant OCI source no longer requires the signed private artifact"
+	manual_subject=$(yq eval -r '.spec.verify.matchOIDCIdentity[0].subject' "$manual_oci_repository")
+	validate_manual_oidc_subject "$manual_subject" ||
+		fail "manual Platform tenant OCI subject is not an anchored, narrow app-publisher writer form"
 
 	# shellcheck disable=SC2016
 	yq eval -e '
@@ -487,6 +536,88 @@ run_scaffold_mutation() {
 		fail "renamed scaffold authorization mutation passed: $description"
 	fi
 }
+
+subject_controls_run=0
+run_manual_subject_control() {
+	description=$1
+	control_subject=$2
+	expected_result=$3
+	control=$mutation_dir/subject-control
+	rm -rf "$control"
+	cp -R "$baseline" "$control"
+	SUBJECT_CONTROL=$control_subject yq eval \
+		'.spec.verify.matchOIDCIdentity[0].subject = strenv(SUBJECT_CONTROL)' \
+		"$control/k8s/bases/apps/ascoachingogvaner/oci-repository.yaml" > "$mutation_dir/subject-control.yaml"
+	mv "$mutation_dir/subject-control.yaml" "$control/k8s/bases/apps/ascoachingogvaner/oci-repository.yaml"
+	result=reject
+	if (validate_platform "$control") >/dev/null 2>&1; then
+		result=accept
+	fi
+	[ "$result" = "$expected_result" ] || fail "manual subject control failed: $description ($result)"
+	subject_controls_run=$((subject_controls_run + 1))
+}
+
+# These are literal writer shapes, exercised against a copy of the real Platform
+# envelope, not examples merely searched for in the implementation. Platform owns
+# the approved revisions; this check holds its serialization to narrow app-only
+# identities. Nothing here grants a new revision or changes the starter's caller.
+control_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+control_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+control_c=cccccccccccccccccccccccccccccccccccccccc
+control_d=dddddddddddddddddddddddddddddddddddddddd
+control_prefix='^https://github\.com/devantler-tech/'
+control_legacy='actions/\.github/workflows/publish-app\.yaml@'
+control_canonical='\.github/\.github/workflows/publish-app\.yaml@'
+run_manual_subject_control 'one legacy revision' \
+	"${control_prefix}${control_legacy}${control_a}\$" accept
+run_manual_subject_control 'two legacy revisions' \
+	"${control_prefix}${control_legacy}(${control_a}|${control_b})\$" accept
+run_manual_subject_control 'three legacy revisions' \
+	"${control_prefix}${control_legacy}(${control_a}|${control_b}|${control_c})\$" accept
+run_manual_subject_control 'both locations with one revision each' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$" accept
+run_manual_subject_control 'one legacy and two maintained revisions' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}(${control_c}|${control_d}))\$" accept
+run_manual_subject_control 'two legacy and two maintained revisions' \
+	"${control_prefix}(${control_legacy}(${control_a}|${control_b})|${control_canonical}(${control_c}|${control_d}))\$" accept
+run_manual_subject_control 'three legacy and two maintained revisions' \
+	"${control_prefix}(${control_legacy}(${control_a}|${control_b}|${control_c})|${control_canonical}(${control_c}|${control_d}))\$" accept
+run_manual_subject_control 'three legacy and one maintained revision' \
+	"${control_prefix}(${control_legacy}(${control_a}|${control_b}|${control_c})|${control_canonical}${control_d})\$" accept
+run_manual_subject_control 'two legacy and one maintained revision' \
+	"${control_prefix}(${control_legacy}(${control_a}|${control_b})|${control_canonical}${control_c})\$" accept
+run_manual_subject_control 'same SHA remains distinct across locations' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_a})\$" accept
+run_manual_subject_control 'maintained tag' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}v7.23.0)\$" reject
+run_manual_subject_control 'maintained branch' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}main)\$" reject
+run_manual_subject_control 'maintained short SHA' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}ccccccc)\$" reject
+run_manual_subject_control 'maintained wildcard' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}.*)\$" reject
+run_manual_subject_control 'third maintained revision' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}(${control_b}|${control_c}|${control_d}))\$" reject
+run_manual_subject_control 'duplicate maintained revision' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}(${control_b}|${control_b}))\$" reject
+run_manual_subject_control 'duplicate legacy revision' \
+	"${control_prefix}${control_legacy}(${control_a}|${control_a})\$" reject
+run_manual_subject_control 'four legacy revisions' \
+	"${control_prefix}${control_legacy}(${control_a}|${control_b}|${control_c}|${control_d})\$" reject
+run_manual_subject_control 'ungrouped locations' \
+	"${control_prefix}${control_legacy}${control_a}|${control_canonical}${control_b}\$" reject
+run_manual_subject_control 'different maintained workflow' \
+	"${control_prefix}(${control_legacy}${control_a}|\\.github/\\.github/workflows/publish-manifests\\.yaml@${control_b})\$" reject
+run_manual_subject_control 'different maintained repository' \
+	"${control_prefix}(${control_legacy}${control_a}|other/\\.github/workflows/publish-app\\.yaml@${control_b})\$" reject
+run_manual_subject_control 'unescaped maintained repository dots' \
+	"${control_prefix}(${control_legacy}${control_a}|.github/\\.github/workflows/publish-app\\.yaml@${control_b})\$" reject
+run_manual_subject_control 'missing pair end anchor' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})" reject
+run_manual_subject_control 'suffix after pair end anchor' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$junk" reject
+run_manual_subject_control 'canonical-only form not emitted by writer' \
+	"${control_prefix}${control_canonical}${control_b}\$" reject
 
 rgd_path=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
 manual_path=k8s/bases/apps/ascoachingogvaner
@@ -671,4 +802,4 @@ run_publish_mutation "caller SHA-pin enforcement removed" \
 run_publish_mutation "caller SHA-pin enforcement disabled" \
 	'.jobs.publish.with."enable-caller-pin" = false'
 
-echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations)"
+echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations + ${subject_controls_run} subject controls)"
