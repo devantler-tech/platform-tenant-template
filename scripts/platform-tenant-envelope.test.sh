@@ -355,6 +355,7 @@ validate_platform() {
 		and (.spec.verify.matchOIDCIdentity | length) == 1
 		and .spec.verify.matchOIDCIdentity[0].issuer == strenv(expected_oidc_issuer)
 		and (.spec.verify.matchOIDCIdentity[0].subject | tag == "!!str")
+		and (.spec.verify.matchOIDCIdentity[0].subject | test("[[:space:][:cntrl:]]") | not)
 	' "$manual_oci_repository" >/dev/null || fail "manual Platform tenant OCI source no longer requires the signed private artifact"
 	manual_subject=$(yq eval -r '.spec.verify.matchOIDCIdentity[0].subject' "$manual_oci_repository")
 	validate_manual_oidc_subject "$manual_subject" ||
@@ -616,6 +617,11 @@ run_manual_subject_control 'missing pair end anchor' \
 	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})" reject
 run_manual_subject_control 'suffix after pair end anchor' \
 	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$junk" reject
+# Preserve the literal newline: command substitution would otherwise strip it.
+control_newline='
+'
+run_manual_subject_control 'trailing newline after pair end anchor' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$${control_newline}" reject
 run_manual_subject_control 'canonical-only form not emitted by writer' \
 	"${control_prefix}${control_canonical}${control_b}\$" reject
 
@@ -730,6 +736,8 @@ run_mutation "manual OCI verification removed" "$manual_path/oci-repository.yaml
 	'del(.spec.verify)'
 run_mutation "manual OCI subject widened" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github.com/devantler-tech/.*$"'
+run_mutation "manual OCI subject contains a NUL byte" "$manual_path/oci-repository.yaml" \
+	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$\u0000"'
 run_mutation "manual OCI key verification override added" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.secretRef.name) = "alternate-cosign-key"'
 # The subject is compared verbatim, so every widening of its ref half or producer
