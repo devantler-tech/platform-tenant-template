@@ -154,9 +154,14 @@ all IDs must be full lowercase commit IDs, and the whole subject must be anchore
 Its controls exercise copies of the Platform envelope and reject mutable refs,
 wildcards, wrong producers, duplicate IDs and excess approvals. This checks the
 writer's narrow shape; Platform still owns which exact revisions are approved.
-The starter caller and generic KRO subject remain on their current legacy
-identity until their coordinated migration; accepting a manual writer form does
-not activate a maintained publisher or authorize a tenant's caller pin.
+The generic KRO rule may retain the existing legacy full-commit pattern, alone
+or paired with one or two literal maintained commits. Its rule must also match
+the starter's actual pinned publisher identity; recognizing a valid rule shape
+does not establish that the producer and consumer agree. Maintained wildcards,
+mutable callers, multiple YAML documents and control characters are rejected.
+The starter caller remains unchanged until the corresponding Platform approval
+and verification policy have been deployed. This compatibility check does not
+activate a maintained publisher or authorize a tenant's caller pin.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
