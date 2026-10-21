@@ -129,7 +129,7 @@ use the `ci` prefix (set in `.github/dependabot.yml`) and release nothing.
 Tenants own both files, so an existing tenant adds the `build(deps)` rule and
 the `ci` prefix itself.
 Each tag triggers `cd.yaml`, which calls the platform's
-[`publish-app.yaml`](https://github.com/devantler-tech/actions/blob/main/.github/workflows/publish-app.yaml)
+[`publish-app.yaml`](https://github.com/devantler-tech/.github/blob/main/.github/workflows/publish-app.yaml)
 reusable workflow to build the image, **pin its digest into
 `deploy/deployment.yaml`**, push the manifests as an OCI artifact, and
 **cosign-sign** both. The platform's `OCIRepository` verifies that signature, so
@@ -159,9 +159,12 @@ or paired with one or two literal maintained commits. Its rule must also match
 the starter's actual pinned publisher identity; recognizing a valid rule shape
 does not establish that the producer and consumer agree. Maintained wildcards,
 mutable callers, multiple YAML documents and control characters are rejected.
-The starter caller remains unchanged until the corresponding Platform approval
-and verification policy have been deployed. This compatibility check does not
-activate a maintained publisher or authorize a tenant's caller pin.
+The starter uses the maintained publisher at its reviewed minimum version.
+Its portable guard rejects a return to the retired catalogue, movable refs,
+older versions and version comments that do not match the immutable commit.
+The Platform approval and verification policy must be deployed before a live
+tenant adopts that caller. This compatibility check does not activate publishing
+or authorize a tenant's caller pin.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that

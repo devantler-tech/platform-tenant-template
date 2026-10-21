@@ -68,7 +68,7 @@ required check, a conflict, or a green head that never merges — is ordinary
 work: repair it with the least invasive change that lets it merge. Before
 pushing an adaptation commit to the bot's branch, convert the pull request to
 draft and disable auto-merge; the adapted head then needs the normal exact-head
-review. A partial `devantler-tech/actions` bump that fails the shared-commit
+review. A partial `devantler-tech/.github` bump that fails the shared-commit
 caller check is this case: move the remaining callers to the same reviewed
 commit on the bot's branch.
 
