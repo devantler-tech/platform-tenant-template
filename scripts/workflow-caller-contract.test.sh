@@ -78,6 +78,10 @@ validate_contract() {
 	ignore_file=$6
 	dependabot_file=$7
 
+	yq eval -e '.jobs.publish.uses | test("^devantler-tech/[.]github/[.]github/workflows/publish-app[.]yaml@[0-9a-f]{40}$")' \
+		"$cd_file" >/dev/null ||
+		fail 'the starter must ship the maintained application publisher'
+
 	sh "$portable_contract" --validate "$cd_file" "$release_file" "$template_sync_file" ||
 		fail 'the portable workflow-caller pin contract rejected the caller set'
 
@@ -86,7 +90,7 @@ validate_contract() {
 		fail 'the publish caller must keep the producer-side ref guard enabled'
 
 	# Canonical release and sync callers move together within their own catalogue.
-	# The retained legacy publisher has an independent reviewed version. Dependabot treats
+	# The maintained publisher has an independent, explicitly approved version. Dependabot treats
 	# each reusable workflow as its own dependency, so with no group it opens one pull request
 	# per caller — #156, #157 and #158 each touched exactly one file — and every one of them
 	# arrives with the other two still behind, failing those assertions in required CI. No merge
@@ -255,7 +259,9 @@ run_mutation() {
 }
 
 run_mutation 'publish caller SHA pin removed' cd \
-	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@main"'
+	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@main"'
+run_mutation 'legacy publisher restored' cd \
+	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328"'
 run_mutation 'publisher-side caller pin disabled' cd \
 	'.jobs.publish.with."enable-caller-pin" = false'
 run_mutation 'release caller SHA pin removed' release \
@@ -340,13 +346,13 @@ run_fleet_mutation() {
 		rest=${pair#*|}
 		mutant_path=${rest%%|*}
 		mutant_workflow=${rest##*|}
-		if [ "$family" = actions ]; then
+		if [ "$family" = publish ]; then
 			[ "$mutant_workflow" = publish-app ] || continue
 		else
 			[ "$mutant_workflow" != publish-app ] || continue
 		fi
 		yq eval \
-			"${mutant_path} = \"devantler-tech/${family}/.github/workflows/${mutant_workflow}.yaml@${ref}\" |
+			"${mutant_path} = \"devantler-tech/.github/.github/workflows/${mutant_workflow}.yaml@${ref}\" |
 			 ${mutant_path} line_comment = \"${version}\"" \
 			"$mutation_dir/$mutant_file" > "$mutation_dir/mutant.yaml"
 		mv "$mutation_dir/mutant.yaml" "$mutation_dir/$mutant_file"
@@ -367,19 +373,19 @@ run_fleet_mutation() {
 }
 
 run_mutation 'publish caller rolled back while the others stay current' cd \
-	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@b089a1b041cb86af22cdc57de58a4d7d258dcc32"'
+	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@77cfa9cfc5514ebe1429f64e681afd181cf4515d"'
 run_mutation 'release caller rolled back while the others stay current' release \
 	'.jobs.release.uses = "devantler-tech/.github/.github/workflows/create-release.yaml@4b00bd6698af033dc472b39a7e609173fe38dfb1"'
 run_fleet_mutation 'publisher below reviewed floor' \
-	'b089a1b041cb86af22cdc57de58a4d7d258dcc32' 'v13.1.1' actions 'older than the reviewed floor'
-run_fleet_mutation 'publisher at historical v13.0.7' \
-	'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'v13.0.7' actions 'older than the reviewed floor'
+	'77cfa9cfc5514ebe1429f64e681afd181cf4515d' 'v7.22.0' publish 'older than the reviewed floor'
+run_fleet_mutation 'publisher at historical maintained v6.1.0' \
+	'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'v6.1.0' publish 'older than the reviewed floor'
 run_fleet_mutation 'publisher version comment stripped' \
-	'd72ecd5e8b680c2066a490a2b761a8913c454575' '' actions 'version comment of the form'
+	'0c7b6c3509b73adbc7537e030935bb01987e625b' '' publish 'version comment of the form'
 run_fleet_mutation 'publisher version comment unparseable' \
-	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'vLATEST.x.y' actions 'version comment of the form'
+	'0c7b6c3509b73adbc7537e030935bb01987e625b' 'vLATEST.x.y' publish 'version comment of the form'
 run_fleet_mutation 'publisher version comment carrying a fourth component' \
-	'd72ecd5e8b680c2066a490a2b761a8913c454575' 'v13.1.3.0' actions 'version comment of the form'
+	'0c7b6c3509b73adbc7537e030935bb01987e625b' 'v7.23.0.0' publish 'version comment of the form'
 run_fleet_mutation 'canonical pair below reviewed floor' \
 	'4b00bd6698af033dc472b39a7e609173fe38dfb1' 'v6.0.6' .github 'older than the reviewed floor'
 run_fleet_mutation 'canonical pair carrying a forged release comment' \
