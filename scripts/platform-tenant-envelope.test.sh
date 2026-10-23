@@ -62,6 +62,7 @@ validate_legacy_revision_group() (
 	validate_revision_group "$ref" 3
 )
 
+# Accept only the supported anchored app-publisher identities for this scope.
 validate_oidc_subject() (
 	subject=$1
 	scope=$2
@@ -89,6 +90,7 @@ validate_oidc_subject() (
 	esac
 )
 
+# Decode a conditional default without evaluating its source-provided CEL.
 generic_default_subject() (
 	subject=$1
 	rgd=$2
@@ -228,6 +230,7 @@ validate_openbao_authorization() (
 		fail "Platform tenant OpenBao role no longer binds the exact policy, ServiceAccount, and namespace"
 )
 
+# Check the real Platform envelope, including every source consumer's safeguards.
 validate_platform() {
 	platform_root=$1
 	scaffold_root=${2:-$repo_root}
@@ -269,6 +272,8 @@ validate_platform() {
 		| (.spec.resources[] | select(.id == "kustomizationSops")) as $kustomizationSopsResource
 		| $kustomizationResource.template as $kustomization
 		| $kustomizationSopsResource.template as $kustomizationSops
+		| (.spec.schema.types.TenantSource.digest == "string | default=\"\" maxLength=71 pattern=\"^$|^sha256:[0-9a-f]{64}$\""
+			and .spec.schema.spec.source == "TenantSource | default={} validation=\"((!has(self.digest) || self.digest == '\'''\'') == (!has(self.publisherRevision) || self.publisherRevision == '\'''\'')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != '\'''\''))\" validation=\"!has(oldSelf.digest) || oldSelf.digest == '\'''\'' || (has(self.digest) && self.digest != '\'''\'')\"") as $sourceSchemaValid
 		| (([.spec.resources[] | select(.id == "ghcrAuth")] | length) == 1
 		and ([.spec.resources[] | select(.id == "ociRepository")] | length) == 1
 		and $namespace.kind == "Namespace"
@@ -299,10 +304,11 @@ validate_platform() {
 		and $ociRepository.kind == "OCIRepository"
 		and $ociRepository.metadata.name == "${schema.spec.name}"
 		and $ociRepository.metadata.namespace == "${tenantNamespace.metadata.name}"
-		and ($ociRepository.spec.ref == {"semver": ">=1.0.0"}
+		and ((($ociRepository.spec.ref | tag) == "!!map"
+				and ($ociRepository.spec.ref | length) == 1
+				and $ociRepository.spec.ref.semver == ">=1.0.0")
 			or ($ociRepository.spec.ref == "${schema.spec.source.digest == \"\" ? {\"semver\": \">=1.0.0\"} : {\"digest\": schema.spec.source.digest}}"
-				and .spec.schema.types.TenantSource.digest == "string | default=\"\" maxLength=71 pattern=\"^$|^sha256:[0-9a-f]{64}$\""
-				and .spec.schema.spec.source == "TenantSource | default={} validation=\"((!has(self.digest) || self.digest == '\'''\'') == (!has(self.publisherRevision) || self.publisherRevision == '\'''\'')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != '\'''\''))\" validation=\"!has(oldSelf.digest) || oldSelf.digest == '\'''\'' || (has(self.digest) && self.digest != '\'''\'')\""))
+				and $sourceSchemaValid))
 		and $ociRepository.spec.url == "oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests"
 		and $ociRepository.spec.secretRef.name == "ghcr-auth"
 		and (($ociRepository.spec.suspend // false) == false)
@@ -324,6 +330,7 @@ validate_platform() {
 		and $roleBinding.subjects[0].namespace == "${tenantNamespace.metadata.name}"
 		and (($kustomizationResource.includeWhen | join("|")) == "${!schema.spec.sops}"
 			or (($kustomizationResource.includeWhen | join("|")) == "${schema.spec.source.reconcileApplication && !schema.spec.sops}"
+				and $sourceSchemaValid
 				and .spec.schema.types.TenantSource.reconcileApplication == "boolean | default=true validation=\"self || !oldSelf\""))
 		and $kustomization.kind == "Kustomization"
 		and $kustomization.metadata.namespace == "${tenantNamespace.metadata.name}"
@@ -334,6 +341,7 @@ validate_platform() {
 		and $kustomization.spec.targetNamespace == "${tenantNamespace.metadata.name}"
 		and (($kustomizationSopsResource.includeWhen | join("|")) == "${schema.spec.sops}"
 			or (($kustomizationSopsResource.includeWhen | join("|")) == "${schema.spec.source.reconcileApplication && schema.spec.sops}"
+				and $sourceSchemaValid
 				and .spec.schema.types.TenantSource.reconcileApplication == "boolean | default=true validation=\"self || !oldSelf\""))
 		and $kustomizationSops.kind == "Kustomization"
 		and $kustomizationSops.metadata.namespace == "${tenantNamespace.metadata.name}"
@@ -682,6 +690,7 @@ run_manual_subject_control 'canonical-only form not emitted by writer' \
 # Exercise the actual caller and KRO consumer together. A well-formed signer
 # expression still fails if it does not accept the caller's full identity.
 producer_controls_run=0
+# Exercise producer identity and envelope compatibility together on real copies.
 run_producer_control() {
 	description=$1
 	control_subject=$2
@@ -697,6 +706,11 @@ run_producer_control() {
 	CALLER_CONTROL=$control_caller yq eval '.jobs.publish.uses = strenv(CALLER_CONTROL)' \
 		"$publish_workflow" > "$mutation_dir/producer-cd.yaml"
 	case "${5:-}" in
+		static-ref)
+			yq eval '(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"semver": ">=1.0.0"}' \
+				"$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
+			mv "$mutation_dir/producer-control.yaml" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
+			;;
 		workflow-document) printf '\n---\n{}\n' >> "$mutation_dir/producer-cd.yaml" ;;
 		platform-document) printf '\n---\n{}\n' >> "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" ;;
 		null-subject|nul-subject)
@@ -732,6 +746,8 @@ control_legacy_caller=devantler-tech/actions/.github/workflows/publish-app.yaml@
 control_maintained_caller=devantler-tech/.github/.github/workflows/publish-app.yaml@$control_b
 control_generic_legacy="${control_prefix}${control_legacy}[0-9a-f]{40}\$"
 control_generic_transition="${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}${control_b})\$"
+run_producer_control 'static OCI ref retains conditional reconciliation safeguards' \
+	"$control_generic_transition" "$control_maintained_caller" accept static-ref
 # Literal CEL serialization from Platform's TenantSource publisher contract.
 # These controls exercise the default arm; the explicit arm must remain a
 # single full revision, never an executable or widened publisher expression.
@@ -819,6 +835,10 @@ run_mutation "conditional digest schema becomes mutable" "$rgd_path" \
 	'.spec.schema.types.TenantSource.digest = "string"'
 run_mutation "conditional source loses digest and publisher pairing" "$rgd_path" \
 	'.spec.schema.spec.source = "TenantSource | default={}"'
+run_mutation "static OCI ref bypasses conditional source safeguards" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"semver": ">=1.0.0"} | .spec.schema.spec.source = "TenantSource | default={}"'
+run_mutation "static OCI ref bypasses conditional digest validation" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"semver": ">=1.0.0"} | .spec.schema.types.TenantSource.digest = "string"'
 run_mutation "application reconciliation defaults off" "$rgd_path" \
 	'.spec.schema.types.TenantSource.reconcileApplication = "boolean | default=false"'
 # This is a literal CEL expression in the mutated source, not shell expansion.
