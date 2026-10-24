@@ -27,6 +27,7 @@ publisher_identity=''
 export expected_publish_workflow expected_publish_app_name
 export expected_oidc_issuer
 
+# Report the failed invariant and stop the envelope check with a nonzero status.
 fail() {
 	echo "FAIL: $*" >&2
 	exit 1
@@ -161,6 +162,7 @@ validate_publish_workflow() {
 	publisher_identity="https://github.com/$(yq eval -r '.jobs.publish.uses' "$workflow_file")"
 }
 
+# Require the renamed tenant's exact OpenBao policy and Kubernetes-auth binding.
 validate_openbao_authorization() (
 	platform_root=$1
 	scaffold_root=$2
@@ -516,6 +518,7 @@ cp \
 # from zero and would abort the suite on its very first mutation.
 mutations_run=0
 
+# Reject a mutated Platform envelope and count it as a safety control.
 run_mutation() {
 	mutations_run=$((mutations_run + 1))
 	description=$1
@@ -531,6 +534,7 @@ run_mutation() {
 	fi
 }
 
+# Reject a mutated publisher workflow without changing the baseline caller.
 run_publish_mutation() {
 	mutations_run=$((mutations_run + 1))
 	description=$1
@@ -542,6 +546,7 @@ run_publish_mutation() {
 	fi
 }
 
+# Reject a changed OpenBao authorization stanza in a disposable Platform copy.
 run_vault_mutation() {
 	mutations_run=$((mutations_run + 1))
 	description=$1
@@ -557,6 +562,7 @@ run_vault_mutation() {
 	fi
 }
 
+# Reject duplicate OpenBao authorization stanzas copied between exact delimiters.
 run_vault_duplicate() {
 	mutations_run=$((mutations_run + 1))
 	description=$1
@@ -579,6 +585,7 @@ run_vault_duplicate() {
 	fi
 }
 
+# Preserve acceptance of an unrelated role whose name shares the tenant prefix.
 run_vault_prefixed_role_control() {
 	description=$1
 	mutant=$mutation_dir/vault-prefixed-role
@@ -596,6 +603,7 @@ run_vault_prefixed_role_control() {
 	fi
 }
 
+# Reject a changed renamed-tenant manifest against the unchanged Platform source.
 run_scaffold_mutation() {
 	mutations_run=$((mutations_run + 1))
 	description=$1
@@ -614,6 +622,7 @@ run_scaffold_mutation() {
 }
 
 subject_controls_run=0
+# Compare a manual tenant's literal signer subject with its expected verdict.
 run_manual_subject_control() {
 	description=$1
 	control_subject=$2
