@@ -159,6 +159,13 @@ or paired with one or two literal maintained commits. Its rule must also match
 the starter's actual pinned publisher identity; recognizing a valid rule shape
 does not establish that the producer and consumer agree. Maintained wildcards,
 mutable callers, multiple YAML documents and control characters are rejected.
+The current conditional TenantSource form is recognized without executing CEL:
+the default subject is decoded and checked against the actual caller, while the
+explicit arm must retain its exact maintained-publisher path and full-revision
+schema. Digest selection must retain the immutable digest schema, and optional
+application reconciliation must default on and preserve its deletion guard.
+Static OCI references remain supported; conditional application reconciliation
+still requires the same source schema and safeguards with that reference form.
 The starter uses the maintained publisher at its reviewed minimum version.
 Its portable guard rejects a return to the retired catalogue, movable refs,
 older versions and version comments that do not match the immutable commit.
