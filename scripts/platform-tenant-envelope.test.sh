@@ -32,6 +32,7 @@ fail() {
 	exit 1
 }
 
+# Require a bounded set of distinct, immutable, lowercase commit IDs.
 validate_revision_group() (
 	ref=$1
 	maximum=$2
@@ -53,6 +54,7 @@ validate_revision_group() (
 	'
 )
 
+# Only a generic legacy rule may retain the existing full-commit wildcard.
 validate_legacy_revision_group() (
 	ref=$1
 	scope=$2
@@ -90,16 +92,21 @@ validate_oidc_subject() (
 	esac
 )
 
-# Decode a conditional default without evaluating its source-provided CEL.
+# Select either arm of the supported publisher expression without executing CEL.
+# The optional revision represents a TenantSource input in producer controls;
+# authorization of a live tenant's caller remains the separate publisher-pin gate.
 generic_default_subject() (
 	subject=$1
 	rgd=$2
+	publisher_revision=${3:-}
+	conditional_subject=0
 	# shellcheck disable=SC2016
 	prefix='${schema.spec.source.publisherRevision == "" ? '
 	# shellcheck disable=SC2016
 	suffix=' : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
 	case "$subject" in
 		"$prefix"*"$suffix")
+			conditional_subject=1
 			# A full immutable revision is the only input the explicit arm may
 			# interpolate. Approval is still the separate publisher-pin gate.
 			yq eval -e '.spec.schema.types.TenantSource.publisherRevision == "string | default=\"\" maxLength=40 pattern=\"^$|^[0-9a-f]{40}$\""' "$rgd" >/dev/null || exit 1
@@ -112,9 +119,15 @@ generic_default_subject() (
 			;;
 	esac
 	validate_oidc_subject "$subject" generic || exit 1
+	if [ -n "$publisher_revision" ]; then
+		[ "$conditional_subject" -eq 1 ] || exit 1
+		validate_revision_group "$publisher_revision" 1 || exit 1
+		subject='^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@'"$publisher_revision"'$'
+	fi
 	printf '%s\n' "$subject"
 )
 
+# Bind the tag-only publishing job to its immutable workflow and minimal authority.
 validate_publish_workflow() {
 	workflow_file=$1
 	[ -f "$workflow_file" ] || fail "tenant publish workflow is missing: $workflow_file"
@@ -352,7 +365,7 @@ validate_platform() {
 		and $kustomizationSops.spec.targetNamespace == "${tenantNamespace.metadata.name}")
 	' "$rgd" >/dev/null || fail "Platform KRO Tenant no longer provides the required namespace, RBAC, and Flux envelope"
 	generic_subject=$(yq eval -r '.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject' "$rgd")
-	generic_subject=$(generic_default_subject "$generic_subject" "$rgd") ||
+	generic_subject=$(generic_default_subject "$generic_subject" "$rgd" "${3:-}") ||
 		fail "Platform KRO Tenant OCI subject is not an anchored app-publisher rule"
 	[ -n "$publisher_identity" ] || fail "starter publisher must be validated before its Platform consumer"
 	printf '%s\n' "$publisher_identity" | grep -Eq -- "$generic_subject" ||
@@ -691,6 +704,7 @@ run_manual_subject_control 'canonical-only form not emitted by writer' \
 # expression still fails if it does not accept the caller's full identity.
 producer_controls_run=0
 # Exercise producer identity and envelope compatibility together on real copies.
+# Argument six supplies the conditional TenantSource publisherRevision input.
 run_producer_control() {
 	description=$1
 	control_subject=$2
@@ -735,7 +749,7 @@ run_producer_control() {
 		*) fail "unknown producer-control mutation" ;;
 	esac
 	result=reject
-	if (validate_publish_workflow "$mutation_dir/producer-cd.yaml"; validate_platform "$control") >/dev/null 2>&1; then
+	if (validate_publish_workflow "$mutation_dir/producer-cd.yaml"; validate_platform "$control" "$repo_root" "${6:-}") >/dev/null 2>&1; then
 		result=accept
 	fi
 	[ "$result" = "$expected_result" ] || fail "producer control failed: $description ($result)"
@@ -749,8 +763,8 @@ control_generic_transition="${control_prefix}(${control_legacy}[0-9a-f]{40}|${co
 run_producer_control 'static OCI ref retains conditional reconciliation safeguards' \
 	"$control_generic_transition" "$control_maintained_caller" accept static-ref
 # Literal CEL serialization from Platform's TenantSource publisher contract.
-# These controls exercise the default arm; the explicit arm must remain a
-# single full revision, never an executable or widened publisher expression.
+# Exercise both arms; an explicit revision must remain a single full revision,
+# never an executable or widened publisher expression.
 # shellcheck disable=SC2016
 control_conditional_prefix='${schema.spec.source.publisherRevision == "" ? '
 # shellcheck disable=SC2016
@@ -763,6 +777,22 @@ run_producer_control 'conditional default rejects an unapproved maintained revis
 	"$control_conditional_subject" "devantler-tech/.github/.github/workflows/publish-app.yaml@$control_d" reject
 run_producer_control 'conditional default retains the pinned legacy caller' \
 	"$control_conditional_subject" "$control_legacy_caller" accept
+run_producer_control 'conditional explicit revision accepts the matching maintained caller' \
+	"$control_conditional_subject" "$control_maintained_caller" accept '' "$control_b"
+run_producer_control 'conditional explicit revision selects its caller instead of the default' \
+	"$control_conditional_subject" "devantler-tech/.github/.github/workflows/publish-app.yaml@$control_c" accept '' "$control_c"
+run_producer_control 'conditional explicit revision rejects a different maintained caller' \
+	"$control_conditional_subject" "$control_maintained_caller" reject '' "$control_d"
+run_producer_control 'conditional explicit revision cannot authorize the legacy caller' \
+	"$control_conditional_subject" "$control_legacy_caller" reject '' "$control_a"
+run_producer_control 'conditional explicit revision rejects a wildcard' \
+	"$control_conditional_subject" "$control_maintained_caller" reject '' '.*'
+run_producer_control 'conditional explicit revision rejects a short commit ID' \
+	"$control_conditional_subject" "$control_maintained_caller" reject '' 'bbbbbbb'
+run_producer_control 'conditional explicit revision rejects uppercase commit IDs' \
+	"$control_conditional_subject" "$control_maintained_caller" reject '' 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
+run_producer_control 'static publisher subject cannot consume an explicit revision' \
+	"$control_generic_transition" "$control_maintained_caller" reject '' "$control_b"
 run_producer_control 'conditional explicit branch cannot widen the publisher' \
 	"$control_conditional_prefix$control_conditional_default : \".*\"}" "$control_maintained_caller" reject
 run_producer_control 'conditional expression cannot execute a different operation' \
