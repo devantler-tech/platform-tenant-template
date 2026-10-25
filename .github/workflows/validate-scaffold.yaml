@@ -188,7 +188,8 @@ jobs:
           # Setup steps keep the default condition. Every contract after the last
           # checkout runs whatever an earlier contract concluded, so one run reports
           # every contract that no longer holds; only the network boundary waits for
-          # the admission step, whose Kyverno CLI and policy set it reuses.
+          # the admission step, whose policy set it reuses. The verified CLI is
+          # prepared before either the VPA or admission-policy evaluation.
           expected_contract_if=$(
             printf '%s' \
               "!cancelled()" \
@@ -207,7 +208,10 @@ jobs:
             | [
                 ($e | map(select(.value.id == "checkout-shared-policies")) | length) == 1,
                 ($e | map(select(.key <= $k and (.value | has("if")))) | length) == 0,
-                ($e | map(select(.key > $k)) | length) == 6,
+                ($e | map(select(.key > $k)) | length) == 7,
+                ($e | map(select(.value.id == "prepare-kyverno")) | length) == 1,
+                ($e | map(select(.value.id == "prepare-kyverno")) | .[0].key)
+                  < ($e | map(select(.value.run == "sh scripts/platform-vpa-floor.test.sh")) | .[0].key),
                 ($e | map(select(
                   .key > $k and .value.id != "apply-network-boundary"
                   and .value.if != strenv(expected_contract_if)
@@ -522,20 +526,25 @@ jobs:
       - name: 🌐 Validate Platform network floor
         if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
         run: sh scripts/platform-network-floor.test.sh
+      - name: 📥 Prepare the verified Kyverno CLI
+        id: prepare-kyverno
+        if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-all-errors -o kyverno.tar.gz \
+            "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_CLI_VERSION}/kyverno-cli_${KYVERNO_CLI_VERSION}_linux_x86_64.tar.gz"
+          echo "${KYVERNO_CLI_SHA256}  kyverno.tar.gz" | sha256sum -c -
+          tar -xzf kyverno.tar.gz kyverno
       - name: 📈 Validate Platform VPA floor
         if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
+        env:
+          KYVERNO_CLI: ./kyverno
         run: sh scripts/platform-vpa-floor.test.sh
       - name: 🛂 Apply admission policies to the rendered scaffold
         id: apply-admission-policies
         if: "!cancelled() && steps.checkout-shared-policies.outcome == 'success'"
         run: |
           set -euo pipefail
-          # Download + checksum-verify the kyverno CLI (supply-chain integrity).
-          curl -fsSL --retry 3 --retry-all-errors -o kyverno.tar.gz \
-            "https://github.com/kyverno/kyverno/releases/download/${KYVERNO_CLI_VERSION}/kyverno-cli_${KYVERNO_CLI_VERSION}_linux_x86_64.tar.gz"
-          echo "${KYVERNO_CLI_SHA256}  kyverno.tar.gz" | sha256sum -c -
-          tar -xzf kyverno.tar.gz kyverno
-
           kubectl kustomize deploy/ > rendered.yaml
 
           # Keep only the admission validation kinds (see the job comment): every

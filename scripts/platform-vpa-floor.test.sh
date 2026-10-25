@@ -28,39 +28,62 @@ millicores() {
 }
 
 # Derive Platform's unique Deployment VPA floor and enforce it on the scaffold.
-validate_vpa_floor() {
+validate_vpa_floor() (
 	platform_root=$1
 	scaffold_root=$2
-	platform_policy=$platform_root/k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa.yaml
+	platform_policy=$platform_root/k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-deployment.yaml
 	deployment=$scaffold_root/deploy/deployment.yaml
 
 	[ -f "$platform_policy" ] || fail "Platform auto-vpa policy is missing: $platform_policy"
 	[ -f "$deployment" ] || fail "scaffold Deployment is missing: $deployment"
 
-	# shellcheck disable=SC2016
-	platform_floor_records=$(yq eval -r '
-		.spec.rules[]
-		| .name as $rule_name
-		| select(
-			(.match.resources.kinds | length) == 1
-			and .match.resources.kinds[0] == "Deployment"
-		)
-		| select(.["generate"]["apiVersion"] == "autoscaling.k8s.io/v1")
-		| select(.["generate"]["kind"] == "VerticalPodAutoscaler")
-		| select(.["generate"]["data"]["spec"]["targetRef"]["apiVersion"] == "apps/v1")
-		| select(.["generate"]["data"]["spec"]["targetRef"]["kind"] == "Deployment")
-		| .["generate"]["data"]["spec"]["resourcePolicy"]["containerPolicies"][]
-		| select(.["containerName"] == "*")
-		| [$rule_name, .["minAllowed"]["cpu"]]
-		| @tsv
-	' "$platform_policy")
-	platform_floor_count=$(printf '%s\n' "$platform_floor_records" | awk 'NF { count++ } END { print count + 0 }')
-	[ "$platform_floor_count" -eq 1 ] ||
-		fail "expected exactly one Platform Deployment VPA CPU floor, found $platform_floor_count"
-	platform_rule_name=$(printf '%s\n' "$platform_floor_records" | awk -F '\t' 'NR == 1 { print $1 }')
-	[ "$platform_rule_name" = "generate-vpa-for-deployment" ] ||
-		fail "Platform Deployment VPA floor must use the canonical generate-vpa-for-deployment rule"
-	platform_floors=$(printf '%s\n' "$platform_floor_records" | awk -F '\t' 'NR == 1 { print $2 }')
+	# Evaluate CEL with Kyverno itself rather than parsing the expression as text.
+	# A single canonical policy must generate one VPA for this actual scaffold.
+	yq eval -e '
+		.apiVersion == "policies.kyverno.io/v1"
+		and .kind == "GeneratingPolicy"
+		and .metadata.name == "auto-vpa-deployment"
+		and (.spec.generate | length) == 1
+	' "$platform_policy" >/dev/null || fail "expected the canonical Deployment GeneratingPolicy"
+	validation_dir=$(mktemp -d)
+	trap 'rm -rf "$validation_dir"' EXIT
+	yq eval '.metadata.namespace = "vpa-floor-check"' "$deployment" > "$validation_dir/deployment.yaml" ||
+		fail "could not prepare the scaffold Deployment"
+	cat > "$validation_dir/values.yaml" <<'VALUES'
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+namespaceSelector:
+  - name: vpa-floor-check
+    labels:
+      kubernetes.io/metadata.name: vpa-floor-check
+VALUES
+	"${KYVERNO_CLI:-kyverno}" apply "$platform_policy" \
+		--resource "$validation_dir/deployment.yaml" \
+		--values-file "$validation_dir/values.yaml" \
+		--output "$validation_dir/generated.yaml" --warn-exit-code 0 \
+		> "$validation_dir/kyverno.log" 2>&1 || {
+		cat "$validation_dir/kyverno.log" >&2
+		fail "Kyverno could not evaluate Platform's Deployment VPA policy"
+	}
+	[ -s "$validation_dir/generated.yaml" ] || fail "Platform generated no VPA for the scaffold"
+	yq eval-all -o=json -I=0 'select(. != null)' \
+		"$validation_dir/generated.yaml" > "$validation_dir/generated-stream.json" ||
+		fail "could not read the generated VPA documents"
+	jq -s . "$validation_dir/generated-stream.json" > "$validation_dir/generated.json" ||
+		fail "could not read the generated VPA JSON"
+	workload_name=$(yq eval -r '.metadata.name' "$deployment") || fail "could not read the scaffold identity"
+	jq -e --arg workload "$workload_name" '
+		length == 1
+		and .[0].apiVersion == "autoscaling.k8s.io/v1"
+		and .[0].kind == "VerticalPodAutoscaler"
+		and .[0].metadata.namespace == "vpa-floor-check"
+		and .[0].spec.targetRef == {apiVersion: "apps/v1", kind: "Deployment", name: $workload}
+		and (.[0].spec.resourcePolicy.containerPolicies | length) == 1
+		and .[0].spec.resourcePolicy.containerPolicies[0].containerName == "*"
+	' "$validation_dir/generated.json" >/dev/null ||
+		fail "expected exactly one generated VPA and wildcard CPU floor for the scaffold Deployment"
+	platform_floors=$(jq -r '.[0].spec.resourcePolicy.containerPolicies[0].minAllowed.cpu' \
+		"$validation_dir/generated.json")
 	platform_floor_m=$(millicores "$platform_floors")
 
 	# shellcheck disable=SC2016
@@ -80,7 +103,7 @@ validate_vpa_floor() {
 		fail "scaffold CPU request ${scaffold_requests} is below Platform VPA floor ${platform_floors}; raise deploy/deployment.yaml"
 
 	printf 'Platform VPA floor contract: request=%s floor=%s\n' "$scaffold_requests" "$platform_floors"
-}
+)
 
 if [ "${1:-}" = "--validate" ]; then
 	[ "$#" -eq 3 ] || fail "usage: $0 --validate <platform-root> <scaffold-root>"
@@ -94,7 +117,7 @@ validate_vpa_floor "$platform_root" "$repo_root"
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
 
-platform_policy_rel=k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa.yaml
+platform_policy_rel=k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-deployment.yaml
 mkdir -p "$mutation_dir/platform/$(dirname -- "$platform_policy_rel")" "$mutation_dir/scaffold/deploy"
 cp "$platform_root/$platform_policy_rel" "$mutation_dir/platform/$platform_policy_rel"
 cp "$repo_root/deploy/deployment.yaml" "$mutation_dir/scaffold/deploy/deployment.yaml"
@@ -125,18 +148,22 @@ run_mutation() {
 run_mutation "scaffold request lowered below the Platform floor" '' \
 	'.spec.template.spec.containers[0].resources.requests.cpu = "10m"'
 run_mutation "Platform Deployment VPA rule removed" \
-	'del(.spec.rules[] | select(.name == "generate-vpa-for-deployment"))' ''
+	'.spec.generate = []' ''
 run_mutation "Platform floor raised above the scaffold request" \
-	'(.spec.rules[] | select(.name == "generate-vpa-for-deployment") | .["generate"].data.spec.resourcePolicy.containerPolicies[] | select(.containerName == "*") | .minAllowed.cpu) = "60m"' ''
+	'.spec.generate[0].expression |= sub("\"cpu\": \"[^\"]+\""; "\"cpu\": \"60m\"")' ''
 run_mutation "Platform Deployment VPA rule duplicated" \
-	'.spec.rules += [.spec.rules[] | select(.name == "generate-vpa-for-deployment")]' ''
-run_mutation "Platform Deployment VPA rule duplicated under another name" \
-	'.spec.rules += [(.spec.rules[] | select(.name == "generate-vpa-for-deployment") | .name = "duplicate-vpa-for-deployment")]' ''
+	'.spec.generate += [.spec.generate[0]]' ''
+run_mutation "Platform Deployment VPA policy renamed" \
+	'.metadata.name = "duplicate-vpa-for-deployment"' ''
 run_mutation "Platform CPU floor removed" \
-	'del(.spec.rules[] | select(.name == "generate-vpa-for-deployment") | .["generate"].data.spec.resourcePolicy.containerPolicies[] | select(.containerName == "*") | .minAllowed.cpu)' ''
+	'.spec.generate[0].expression |= sub("\"cpu\": \"[^\"]+\", "; "")' ''
 run_mutation "Platform CPU floor changed to a noncanonical quantity" \
-	'(.spec.rules[] | select(.name == "generate-vpa-for-deployment") | .["generate"].data.spec.resourcePolicy.containerPolicies[] | select(.containerName == "*") | .minAllowed.cpu) = "0.05"' ''
+	'.spec.generate[0].expression |= sub("\"cpu\": \"[^\"]+\""; "\"cpu\": \"0.05\"")' ''
 run_mutation "scaffold application container duplicated" '' \
 	'.spec.template.spec.containers += [.spec.template.spec.containers[0]]'
+run_mutation "Platform policy matches no Deployment" \
+	'.spec.matchConstraints.resourceRules[0].resources = ["statefulsets"]' ''
+run_mutation "Platform generates a VPA for the wrong workload kind" \
+	'.spec.generate[0].expression |= sub("\"kind\": \"Deployment\""; "\"kind\": \"StatefulSet\"")' ''
 
-echo "PASS: Platform VPA floor contract (happy path + 8 safety mutations)"
+echo "PASS: Platform VPA floor contract (happy path + 10 safety mutations)"

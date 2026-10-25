@@ -72,7 +72,7 @@ tenant still carrying these from an older sync can delete them for good):**
 | `scripts/tenant-rbac*.test.sh` | Proves the Platform tenant reconciliation identity can manage every rendered scaffold resource while cluster-scoped and interactive privileges stay denied |
 | `scripts/platform-tenant-envelope*.test.sh` | Binds the template's signed publisher and those workload-level models to Platform's live KRO and manual tenant registrations: private GHCR pull identity, cosign-verifying OCI source, managed Pod Security namespace, `tenant-edit` ServiceAccount binding, Flux source/impersonation/target namespace, and the exact OpenBao policy and Kubernetes-auth role that let the renamed tenant read and seed only its own app secrets |
 | `scripts/platform-network-floor*.test.sh` | Binds Platform's generated default-deny, DNS, and standard NetworkPolicy floor to the scaffold's required Gateway, namespace, CNPG, Kubernetes API, and DNS paths, reporting a check that cannot read its input separately from a policy verdict |
-| `scripts/platform-vpa-floor*.test.sh` | Keeps the scaffold's initial CPU request at or above Platform's generated Deployment VPA floor, with live-policy and mutation coverage |
+| `scripts/platform-vpa-floor*.test.sh` | Uses Kyverno to evaluate Platform's Deployment GeneratingPolicy and keeps the scaffold's initial CPU request at or above the generated VPA floor, with mutation coverage |
 
 **Yours (list these in `.templatesyncignore`):**
 
@@ -203,3 +203,10 @@ sh scripts/platform-tenant-envelope-contract.test.sh  # live Platform tenant-env
 sh scripts/platform-network-floor-contract.test.sh    # generated Platform network-floor contract
 sh scripts/platform-vpa-floor-contract.test.sh        # generated Platform VPA-floor contract
 ```
+
+The live VPA-floor check additionally needs Kyverno CLI 1.19.1 or later and a
+read-only Platform checkout at `.platform` (or `PLATFORM_ROOT`). It evaluates the
+Deployment policy locally against a copy of the scaffold in a test namespace;
+it does not contact a cluster. Run `sh scripts/platform-vpa-floor.test.sh` with
+`kyverno` on `PATH`, or set `KYVERNO_CLI` to the binary's path. The workflow
+downloads and checksum-verifies its pinned CLI before this check.

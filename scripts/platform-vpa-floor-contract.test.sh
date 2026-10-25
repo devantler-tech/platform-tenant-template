@@ -63,7 +63,8 @@ validate_contract() {
 		fail "Platform VPA-floor contract step is missing or conditional"
 
 	for needle in \
-		'generate-vpa-for-deployment' \
+		'GeneratingPolicy' \
+		'auto-vpa-deployment' \
 		'autoscaling.k8s.io/v1' \
 		'VerticalPodAutoscaler' \
 		'minAllowed' \
@@ -75,10 +76,12 @@ validate_contract() {
 		'Platform Deployment VPA rule removed' \
 		'Platform floor raised above the scaffold request' \
 		'Platform Deployment VPA rule duplicated' \
-		'Platform Deployment VPA rule duplicated under another name' \
+		'Platform Deployment VPA policy renamed' \
 		'Platform CPU floor removed' \
 		'Platform CPU floor changed to a noncanonical quantity' \
-		'scaffold application container duplicated'
+		'scaffold application container duplicated' \
+		'Platform policy matches no Deployment' \
+		'Platform generates a VPA for the wrong workload kind'
 	do
 		grep -Fq -- "$needle" "$runtime_file" ||
 			fail "Platform VPA-floor runtime lacks: $needle"
