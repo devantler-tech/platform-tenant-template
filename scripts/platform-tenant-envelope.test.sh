@@ -293,13 +293,13 @@ validate_platform() {
 		and ([.spec.resources[] | select(.id == "ociRepository")] | length) == 1
 		and $namespace.kind == "Namespace"
 		and $namespace.metadata.name == "${schema.spec.name}"
-		and $namespace.metadata.labels."app.kubernetes.io/managed-by" == "ksail"
+		and $namespace.metadata.labels."app.kubernetes.io/managed-by" == "kro"
 		and $namespace.metadata.labels."pod-security.kubernetes.io/enforce" == "restricted"
 		and $namespace.metadata.labels."pod-security.kubernetes.io/enforce-version" == "latest"
 		and $serviceAccount.kind == "ServiceAccount"
 		and $serviceAccount.metadata.name == "${schema.spec.name}"
 		and $serviceAccount.metadata.namespace == "${tenantNamespace.metadata.name}"
-		and $serviceAccount.metadata.labels."app.kubernetes.io/managed-by" == "ksail"
+		and $serviceAccount.metadata.labels."app.kubernetes.io/managed-by" == "kro"
 		and $serviceAccount.automountServiceAccountToken == false
 		and ($serviceAccount.imagePullSecrets | length) == 1
 		and $serviceAccount.imagePullSecrets[0].name == "ghcr-auth"
