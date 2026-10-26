@@ -73,7 +73,7 @@ jobs:
       CRDS_CATALOG_REF: 1f22207301c45da9ee687f6bbf728da049e6c105
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
       - name: 📥 Checkout
@@ -491,7 +491,7 @@ jobs:
       KYVERNO_CLI_SHA256: b38228f367fc0fdc2b08f4c83ea50ac5f16c60ff8d62d76a66157c33c47b70ae
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
       - name: 📥 Checkout
@@ -1055,7 +1055,7 @@ jobs:
       POD_SECURITY_VERSION: v1.36
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
       - name: 📥 Checkout
@@ -1093,7 +1093,7 @@ jobs:
       issues: write # open, update, or close the drift tracking issue
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
       - name: 📣 Open or update the drift issue
