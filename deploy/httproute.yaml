@@ -11,13 +11,14 @@ metadata:
   # (k8s/bases/apps/homepage/config-map.yaml in the platform repo): the
   # restrict-homepage-service-groups ClusterPolicy denies an undeclared group at
   # admission, so an invented one makes the tenant inadmissible on day one. The
-  # default Clients group is declared there. Choose another declared group when
-  # tailoring the tenant; consult the current layout instead of inventing one.
+  # default Business & Clients group is declared there. Choose another declared
+  # group when tailoring the tenant; consult the current layout instead of
+  # inventing one.
   annotations:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: app
     gethomepage.dev/description: Tenant application.
-    gethomepage.dev/group: Clients
+    gethomepage.dev/group: Business & Clients
     gethomepage.dev/icon: mdi-application
     gethomepage.dev/href: https://app.platform.devantler.tech
     gethomepage.dev/pod-selector: app.kubernetes.io/name=app
