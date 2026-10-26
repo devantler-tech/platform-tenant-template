@@ -24,10 +24,12 @@ jobs:
       # the repository name (the platform's signed-publish convention).
       app-name: ${{ github.event.repository.name }}
       # The signature this publish mints carries the `uses:` ref above in its
-      # certificate, and the platform's OCIRepository rules accept that subject
-      # as `publish-app.yaml@[0-9a-f]{40}` — SHA-only, with no tag alternative —
-      # so any other ref form fails closed in-cluster: the artifact publishes but
-      # never verifies, and the tenant silently stops reconciling.
+      # certificate. Platform has independently approved this exact maintained
+      # revision for manifests, admission and node pulls. Other maintained
+      # revisions, tags and branches fail closed; a full SHA alone does not
+      # grant approval. A rejected ref still publishes, but the artifact never
+      # verifies in-cluster and the tenant silently stops reconciling, so get
+      # the new revision approved in Platform before changing this pin.
       #
       # Enabling the guard adds the producer-side half: the publish refuses to
       # sign at all, before the build, so a bad ref surfaces here as a failed
