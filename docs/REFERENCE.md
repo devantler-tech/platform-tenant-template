@@ -204,6 +204,9 @@ sh scripts/platform-network-floor-contract.test.sh    # generated Platform netwo
 sh scripts/platform-vpa-floor-contract.test.sh        # generated Platform VPA-floor contract
 ```
 
+The live tenant-envelope check requires `kro` ownership on the controller-created
+Namespace and ServiceAccount; the manual registration retains `ksail` ownership.
+
 The live VPA-floor check additionally needs Kyverno CLI 1.19.1 or later and a
 read-only Platform checkout at `.platform` (or `PLATFORM_ROOT`). It evaluates the
 Deployment policy locally against a copy of the scaffold in a test namespace;
