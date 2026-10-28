@@ -47,7 +47,10 @@ validate_vpa_floor() (
 	' "$platform_policy" >/dev/null || fail "expected the canonical Deployment GeneratingPolicy"
 	validation_dir=$(mktemp -d)
 	trap 'rm -rf "$validation_dir"' EXIT
-	yq eval '.metadata.namespace = "vpa-floor-check"' "$deployment" > "$validation_dir/deployment.yaml" ||
+	# Generation evaluates a persisted workload, whose UID is assigned by the API
+	# server. Supply that identity only to the offline input, not the scaffold.
+	yq eval '.metadata.namespace = "vpa-floor-check" | .metadata.uid = "cf15949d-8d87-4ef5-9a44-ce75d2dbb8cd"' \
+		"$deployment" > "$validation_dir/deployment.yaml" ||
 		fail "could not prepare the scaffold Deployment"
 	cat > "$validation_dir/values.yaml" <<'VALUES'
 apiVersion: cli.kyverno.io/v1alpha1
