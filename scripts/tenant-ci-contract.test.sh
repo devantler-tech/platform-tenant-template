@@ -137,10 +137,10 @@ validate_contract() {
 		'(.jobs."ci-required-checks" | has("continue-on-error") | not)'
 	assert_ci "required-check job must have only audited keys" \
 		'(.jobs."ci-required-checks" | keys | sort | join(",")) == "if,name,needs,permissions,runs-on,steps"'
-	assert_ci "required-check job must have no permissions" \
-		'((.jobs."ci-required-checks".permissions | type) == "!!map") and ((.jobs."ci-required-checks".permissions | length) == 0)'
-	assert_ci "required-check job must contain exactly two audited steps" \
-		'(.jobs."ci-required-checks".steps | length) == 2'
+	assert_ci "required-check job must have Actions-read only" \
+		'((.jobs."ci-required-checks".permissions | keys | join(",")) == "actions") and (.jobs."ci-required-checks".permissions.actions == "read")'
+	assert_ci "required-check job must contain exactly three audited steps" \
+		'(.jobs."ci-required-checks".steps | length) == 3'
 	# The shared aggregator intentionally tolerates skipped jobs, so the tenant
 	# gate must reject every non-success result before invoking it.
 	# shellcheck disable=SC2016
@@ -154,12 +154,24 @@ validate_contract() {
 		)] | length == 1
 	'
 	# shellcheck disable=SC2016
-	assert_ci "required-check aggregate must consume the exact results" '
+	assert_ci "required-check aggregate must consume exact results and enable native startup inspection" '
 		[.jobs."ci-required-checks".steps[] | select(
 			(.uses | test("^devantler-tech/\\.github/actions/aggregate-job-checks@[0-9a-f]{40}$"))
+			and .id == "ci-checks"
 			and .with."job-results" == "${{ needs.example.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }} ${{ needs.publish-pin-approved.result }}"
-			and ((keys | sort | join(",")) == "name,uses,with")
-			and ((.with | keys | sort | join(",")) == "job-results")
+			and .with."check-workflow-startup" == "true"
+			and ((keys | sort | join(",")) == "id,name,uses,with")
+			and ((.with | keys | sort | join(",")) == "check-workflow-startup,job-results")
+		)] | length == 1
+	'
+	# shellcheck disable=SC2016
+	assert_ci "required-check job must reject an absent startup snapshot" '
+		[.jobs."ci-required-checks".steps[] | select(
+			.name == "Require workflow startup evidence"
+			and .if == "${{ steps.ci-checks.outputs.startup-clear != '\''true'\'' }}"
+			and .run == "exit 1"
+			and .shell == "bash"
+			and ((keys | sort | join(",")) == "if,name,run,shell")
 		)] | length == 1
 	'
 
@@ -251,6 +263,7 @@ run_mutation() {
 	agents_mutation=${5:-}
 	ignore_mutation=${6:-}
 	reference_mutation=${7:-}
+	expected_rejection=${8:-}
 
 	cp "$ci_workflow" "$mutation_dir/ci.yaml"
 	cp "$scaffold_workflow" "$mutation_dir/scaffold.yaml"
@@ -284,14 +297,18 @@ run_mutation() {
 		mv "$mutation_dir/mutant.md" "$mutation_dir/REFERENCE.md"
 	fi
 
-	if (validate_contract \
+	if rejection=$( (validate_contract \
 		"$mutation_dir/ci.yaml" \
 		"$mutation_dir/scaffold.yaml" \
 		"$mutation_dir/README.md" \
 		"$mutation_dir/AGENTS.md" \
 		"$mutation_dir/templatesyncignore" \
-		"$mutation_dir/REFERENCE.md") >/dev/null 2>&1; then
+		"$mutation_dir/REFERENCE.md") 2>&1); then
 		fail "mutation passed: $description"
+	fi
+	if [ -n "$expected_rejection" ]; then
+		printf '%s\n' "$rejection" | grep -qF -- "$expected_rejection" ||
+			fail "mutation rejected for the wrong reason: $description"
 	fi
 }
 
@@ -408,4 +425,29 @@ run_mutation "contract ignore removed" '' '' '' '' \
 run_mutation "reference local validation command removed" '' '' '' '' '' \
 	'/sh scripts\/tenant-ci-contract.test.sh/d'
 
-echo "PASS: tenant CI contract (happy path + 50 safety mutations)"
+run_mutation "startup read permission removed" \
+	'.jobs."ci-required-checks".permissions = {}' '' '' '' '' '' \
+	'Actions-read only'
+run_mutation "startup read permission widened" \
+	'.jobs."ci-required-checks".permissions.actions = "write"' '' '' '' '' '' \
+	'Actions-read only'
+run_mutation "unneeded startup contents access added" \
+	'.jobs."ci-required-checks".permissions.contents = "read"' '' '' '' '' '' \
+	'Actions-read only'
+run_mutation "startup inspection disabled" \
+	'.jobs."ci-required-checks".steps[0].with."check-workflow-startup" = "false"' '' '' '' '' '' \
+	'enable native startup inspection'
+run_mutation "startup inspection opt-in removed" \
+	'del(.jobs."ci-required-checks".steps[0].with."check-workflow-startup")' '' '' '' '' '' \
+	'enable native startup inspection'
+run_mutation "startup snapshot guard removed" \
+	'del(.jobs."ci-required-checks".steps[2])' '' '' '' '' '' \
+	'exactly three audited steps'
+run_mutation "startup snapshot guard disabled" \
+	'.jobs."ci-required-checks".steps[2].if = "false"' '' '' '' '' '' \
+	'reject an absent startup snapshot'
+run_mutation "startup snapshot refusal allowed to fail" \
+	'.jobs."ci-required-checks".steps[2]."continue-on-error" = true' '' '' '' '' '' \
+	'reject an absent startup snapshot'
+
+echo "PASS: tenant CI contract (happy path and safety mutations)"

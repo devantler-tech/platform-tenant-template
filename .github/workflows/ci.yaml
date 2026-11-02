@@ -102,12 +102,15 @@ jobs:
     name: CI - Required Checks
     runs-on: ubuntu-latest
     needs: [workflow-caller-pins, example, delivery-inputs, publish-pin-approved]
-    permissions: {}
+    permissions:
+      actions: read # native workflow-run metadata only
     if: ${{ always() }}
     steps:
       - name: 📊 Require all CI checks to pass
+        id: ci-checks
         uses: devantler-tech/.github/actions/aggregate-job-checks@d8b5d0e9429cebf12907e0d4cb448433d3108e4b # v19.0.12
         with:
+          check-workflow-startup: "true"
           job-results: >-
             ${{ needs.example.result }}
             ${{ needs.delivery-inputs.result }}
@@ -117,5 +120,9 @@ jobs:
       # stable required check must fail unless every named tenant job ran.
       - name: Reject incomplete CI jobs
         if: ${{ needs.workflow-caller-pins.result != 'success' || needs.example.result != 'success' || needs.delivery-inputs.result != 'success' || needs.publish-pin-approved.result != 'success' }}
+        run: exit 1
+        shell: bash
+      - name: Require workflow startup evidence
+        if: ${{ steps.ci-checks.outputs.startup-clear != 'true' }}
         run: exit 1
         shell: bash
