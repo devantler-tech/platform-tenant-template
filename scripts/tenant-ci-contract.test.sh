@@ -141,6 +141,8 @@ validate_contract() {
 		'((.jobs."ci-required-checks".permissions | keys | join(",")) == "actions") and (.jobs."ci-required-checks".permissions.actions == "read")'
 	assert_ci "required-check job must contain exactly three audited steps" \
 		'(.jobs."ci-required-checks".steps | length) == 3'
+	assert_ci "required-check steps must keep aggregate before startup guard" \
+		'.jobs."ci-required-checks".steps[0].id == "ci-checks" and .jobs."ci-required-checks".steps[2].name == "Require workflow startup evidence"'
 	# The shared aggregator intentionally tolerates skipped jobs, so the tenant
 	# gate must reject every non-success result before invoking it.
 	# shellcheck disable=SC2016
@@ -255,6 +257,9 @@ validate_contract \
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
 
+# Copy the six contract inputs, apply the requested YAML/text mutation, then
+# require validation to fail. The optional eighth argument binds the rejection
+# reason so a control cannot pass because an unrelated assertion rejected it.
 run_mutation() {
 	description=$1
 	ci_mutation=${2:-}
@@ -443,6 +448,9 @@ run_mutation "startup inspection opt-in removed" \
 run_mutation "startup snapshot guard removed" \
 	'del(.jobs."ci-required-checks".steps[2])' '' '' '' '' '' \
 	'exactly three audited steps'
+run_mutation "startup snapshot guard moved before aggregate" \
+	'.jobs."ci-required-checks".steps = [.jobs."ci-required-checks".steps[2], .jobs."ci-required-checks".steps[0], .jobs."ci-required-checks".steps[1]]' '' '' '' '' '' \
+	'aggregate before startup guard'
 run_mutation "startup snapshot guard disabled" \
 	'.jobs."ci-required-checks".steps[2].if = "false"' '' '' '' '' '' \
 	'reject an absent startup snapshot'
