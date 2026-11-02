@@ -179,6 +179,11 @@ or authorize a tenant's caller pin.
 
 ## Validate locally
 
+Native required CI also inspects workflow startup failures at the pull-request
+head, using only Actions read access. It requires a complete clear snapshot in
+addition to successful tenant jobs. Separate workflows still need their own
+required checks for failures that happen after that snapshot.
+
 Run these from the repository root. In every tenant, and in this template:
 
 ```sh
