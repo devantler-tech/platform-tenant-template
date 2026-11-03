@@ -298,20 +298,22 @@ jobs:
           # set applies restrict-tenant-network-policies without a namespace context,
           # so only this isolated, context-supplied step can see whether the scaffold's
           # own CiliumNetworkPolicy is admitted — and whether the unconstrained shape
-          # it used to ship is refused (#178). Counts pin the policy, both rules, the
-          # tenant context on every case, the mutation and the denial assertion.
+          # it used to ship is refused (#178). Counts pin the policy, both checks, the
+          # tenant context on every case, the mutation and the denial assertion. A
+          # ValidatingPolicy carries no rule names, so each check is its denial message.
           network_contract='
             .jobs.admissibility.steps
             | map(select(
                 .id == "apply-network-boundary"
                 and ((.run | split("restrict-tenant-network-policies") | length) == 9)
-                and ((.run | split("cnp-ingress-sources-must-be-constrained") | length) == 3)
-                and ((.run | split("cnp-egress-destinations-must-be-constrained") | length) == 3)
+                and ((.run | split("Every ingress source in a tenant") | length) == 3)
+                and ((.run | split("Every egress destination in a tenant") | length) == 3)
                 and ((.run | split("--values-file tenant-values.yaml") | length) == 5)
                 and ((.run | split("--userinfo tenant-user-info.yaml") | length) == 4)
                 and ((.run | split("platform-user-info.yaml") | length) == 2)
                 and ((.run | split("fromEndpoints") | length) == 2)
                 and ((.run | split("toEndpoints") | length) == 2)
+                and ((.run | split("ValidatingPolicy") | length) == 4)
                 and ((.run | split("expect_network_denied") | length) == 4)
                 and ((.run | split("expect_network_allowed") | length) == 4)
               ))
@@ -344,16 +346,18 @@ jobs:
             "${network_run} |= sub(\"--values-file tenant-values.yaml\"; \"\")"
           assert_network_mutant_rejected "tenant user info removed" \
             "${network_run} |= sub(\"--userinfo tenant-user-info.yaml\"; \"\")"
+          assert_network_mutant_rejected "policy kind reverted" \
+            "${network_run} |= sub(\"ValidatingPolicy\"; \"ClusterPolicy\")"
           assert_network_mutant_rejected "named policy removed" \
             "${network_run} |= sub(\"restrict-tenant-network-policies\"; \"\")"
-          assert_network_mutant_rejected "named rule removed" \
-            "${network_run} |= sub(\"cnp-ingress-sources-must-be-constrained\"; \"\")"
+          assert_network_mutant_rejected "ingress check removed" \
+            "${network_run} |= sub(\"Every ingress source in a tenant\"; \"\")"
           assert_network_mutant_rejected "unconstrained ingress mutation removed" \
             "${network_run} |= sub(\"fromEndpoints\"; \"\")"
           assert_network_mutant_rejected "unconstrained egress mutation removed" \
             "${network_run} |= sub(\"toEndpoints\"; \"\")"
-          assert_network_mutant_rejected "egress rule name removed" \
-            "${network_run} |= sub(\"cnp-egress-destinations-must-be-constrained\"; \"\")"
+          assert_network_mutant_rejected "egress check removed" \
+            "${network_run} |= sub(\"Every egress destination in a tenant\"; \"\")"
           assert_network_mutant_rejected "denial assertion removed" \
             "${network_run} |= sub(\"expect_network_denied\"; \"\")"
           assert_network_mutant_rejected "platform identity control removed" \
@@ -742,7 +746,7 @@ jobs:
               ! grep -Eq 'pass: 0, fail: [1-9][0-9]*, warn: 0, error: 0' \
                 "${case_name}.out"; then
               cat "${case_name}.out"
-              echo "::error::${case_name}: failure did not come from the expected policy and rule"
+              echo "::error::${case_name}: failure did not come from the expected policy and check"
               return 1
             fi
           }
@@ -782,24 +786,24 @@ jobs:
           set -euo pipefail
           yq eval-all '
             select(
-              .kind == "ClusterPolicy"
+              .kind == "ValidatingPolicy"
               and .metadata.name == "restrict-tenant-network-policies"
             )
           ' platform-policies.yaml > restrict-tenant-network-policies.yaml
           # grep -c exits 1 on a zero count; guard it so a missing policy reaches
           # the diagnostic below instead of ending the step silently under set -e.
-          policy_count=$(grep -c '^kind: ClusterPolicy$' restrict-tenant-network-policies.yaml || true)
+          policy_count=$(grep -c '^kind: ValidatingPolicy$' restrict-tenant-network-policies.yaml || true)
           [ "${policy_count}" -eq 1 ] || {
-            echo "::error::expected exactly one restrict-tenant-network-policies policy, found ${policy_count}"
+            echo "::error::expected exactly one ValidatingPolicy named restrict-tenant-network-policies, found ${policy_count}; if Platform changed its kind, update this check"
             exit 1
           }
           yq eval -e '
-            [.spec.rules[].name
-              | select(. == "cnp-ingress-sources-must-be-constrained"
-                    or . == "cnp-egress-destinations-must-be-constrained")]
+            [.spec.validations[].message
+              | select(test("Every ingress source in a tenant")
+                    or test("Every egress destination in a tenant"))]
             | length == 2
           ' restrict-tenant-network-policies.yaml >/dev/null || {
-            echo "::error::restrict-tenant-network-policies is missing its ingress or egress rule"
+            echo "::error::restrict-tenant-network-policies is missing its ingress or egress check"
             exit 1
           }
           yq eval '
@@ -812,7 +816,7 @@ jobs:
             exit 1
           }
           # The mutants re-introduce the unconstrained selectors the scaffold used to
-          # ship, one per direction; each must be REFUSED by its own rule, or the
+          # ship, one per direction; each must be REFUSED by its own check, or the
           # valid case proves nothing.
           yq eval '.spec.ingress += [{"fromEndpoints": [{}]}]' \
             tenant-network-policy.yaml > tenant-network-policy-unconstrained.yaml
@@ -837,7 +841,7 @@ jobs:
             fi
             case "${expected}" in
               pass) result='pass: [1-9][0-9]*, fail: 0, warn: 0, error: 0' ;;
-              no-match) result='pass: 0, fail: 0, warn: 0, error: 0, skip: 0' ;;
+              excluded) result='pass: 0, fail: 0, warn: 0, error: 0, skip: 1' ;;
               *) echo "::error::unknown expected result: ${expected}"; return 1 ;;
             esac
             grep -Eq "${result}" "${case_name}.out" || {
@@ -847,7 +851,7 @@ jobs:
             }
           }
           expect_network_denied() {
-            case_name=$1 resource=$2 rule=$3
+            case_name=$1 resource=$2 message=$3
             shift 3
             if run_network_case "${case_name}" "${resource}" "$@"; then
               cat "${case_name}.out"
@@ -856,12 +860,12 @@ jobs:
             fi
             if ! grep -Fq 'policy restrict-tenant-network-policies' \
                 "${case_name}.out" ||
-              ! grep -Fq "${rule}" \
+              ! grep -Fq "${message}" \
                 "${case_name}.out" ||
               ! grep -Eq 'fail: [1-9][0-9]*, warn: 0, error: 0' \
                 "${case_name}.out"; then
               cat "${case_name}.out"
-              echo "::error::${case_name}: failure did not come from the expected policy and rule"
+              echo "::error::${case_name}: failure did not come from the expected policy and check"
               return 1
             fi
           }
@@ -871,15 +875,17 @@ jobs:
             --userinfo tenant-user-info.yaml
           expect_network_denied network-mutant \
             tenant-network-policy-unconstrained.yaml \
-            cnp-ingress-sources-must-be-constrained \
+            'Every ingress source in a tenant' \
             --values-file tenant-values.yaml \
             --userinfo tenant-user-info.yaml
           expect_network_denied network-mutant-egress \
             tenant-network-policy-unconstrained-egress.yaml \
-            cnp-egress-destinations-must-be-constrained \
+            'Every egress destination in a tenant' \
             --values-file tenant-values.yaml \
             --userinfo tenant-user-info.yaml
-          expect_network_allowed platform-network-mutant no-match \
+          # Platform-applied resources are carved out by the policy's
+          # not-platform-applied match condition, so the CLI reports one skip.
+          expect_network_allowed platform-network-mutant excluded \
             tenant-network-policy-unconstrained.yaml \
             --values-file tenant-values.yaml \
             --userinfo platform-user-info.yaml
