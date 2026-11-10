@@ -1104,7 +1104,7 @@ jobs:
           egress-policy: audit
       - name: 📣 Open or update the drift issue
         if: needs.validate-scaffold.result != 'success' || needs.admissibility.result != 'success' || needs.pod-security-admission.result != 'success'
-        uses: devantler-tech/.github/actions/upsert-issue@1a0eb6f18b88a7816b91cbf692b8ad8ea9a08123 # v20.1.17
+        uses: devantler-tech/.github/actions/upsert-issue@0042076bbe7b0ae75a5bc5584333deecff9c5af5 # v20.1.19
         with:
           title: "Scheduled scaffold validation is failing on main"
           body: |
@@ -1118,7 +1118,7 @@ jobs:
             Read the failing step's message first: a check that could not evaluate its input names that as its cause, separately from a policy verdict. This issue is updated by every failing scheduled run and closed by the next passing one.
       - name: ✅ Close the drift issue
         if: needs.validate-scaffold.result == 'success' && needs.admissibility.result == 'success' && needs.pod-security-admission.result == 'success'
-        uses: devantler-tech/.github/actions/upsert-issue@1a0eb6f18b88a7816b91cbf692b8ad8ea9a08123 # v20.1.17
+        uses: devantler-tech/.github/actions/upsert-issue@0042076bbe7b0ae75a5bc5584333deecff9c5af5 # v20.1.19
         with:
           title: "Scheduled scaffold validation is failing on main"
           open: "false"
