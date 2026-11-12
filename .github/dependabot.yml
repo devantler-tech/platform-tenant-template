@@ -14,13 +14,21 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
+    # The application publisher stays on the exact revision Platform has reviewed and approved
+    # for tenants, which `Platform Admissibility` enforces. Every devantler-tech/.github release
+    # moves the publisher's tag together with the callers below, so while Dependabot proposed it,
+    # every group pull request failed that check until someone put the publisher back by hand
+    # (#275 through #282, issue #283). Move this pin by hand, in its own change, once Platform
+    # approves a newer revision.
+    ignore:
+      - dependency-name: "devantler-tech/.github/.github/workflows/publish-app.yaml"
     # The workflow-caller contract requires the maintained release and template-sync callers
-    # to share one commit; the application publisher also needs its own Platform approval.
-    # Dependabot treats each reusable workflow as its own dependency, so UNGROUPED it
-    # opens one PR per caller (#156, #157 and #158 each touched exactly one file) — and every
-    # one of those lands with the other two still behind, failing that assertion in required
-    # CI. No merge order rescues it: the first caller updated always disagrees with the rest.
-    # Grouping advances the callers in one PR without waiving publisher approval.
+    # to share one commit. Dependabot treats each reusable workflow as its own dependency, so
+    # UNGROUPED it opens one PR per caller (#156, #157 and #158 each touched exactly one file) —
+    # and every one of those lands with the other two still behind, failing that assertion in
+    # required CI. No merge order rescues it: the first caller updated always disagrees with the
+    # rest. Grouping advances the callers in one PR; the publisher is ignored above, so the group
+    # never has to wait for a Platform approval.
     groups:
       devantler-tech-actions:
         patterns:
