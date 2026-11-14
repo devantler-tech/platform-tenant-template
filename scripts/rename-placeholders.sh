@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 # rename-placeholders.sh — turn this scaffold into a real tenant in one shot.
 #
-# The deploy/ manifests ship with three placeholder forms that collapse to one
+# The deploy/ manifests (the root entry and its base/, prod/ and dev/
+# overlays) ship with three placeholder forms that collapse to one
 # value — your tenant (repository) name:
 #   • `app`       — the example app/resource name (Deployment, Service, the
 #                   `app.kubernetes.io/name` label *value*, HTTPRoute, the CNPG
@@ -13,8 +14,8 @@
 # repository name — see docs/REFERENCE.md — so a single name drives everything.)
 #
 # Doing this by hand is easy to get half-wrong; this script renames all three
-# across deploy/*.yaml in place WITHOUT corrupting the parts that must NOT
-# change:
+# across deploy/*.yaml and deploy/*/*.yaml in place WITHOUT corrupting the
+# parts that must NOT change:
 #   • the `app.kubernetes.io/name` label *key* (only its value is renamed),
 #   • CloudNativePG's literal `-app` suffix on its generated secret, and
 #   • the shared `openbao` SecretStore name.
@@ -48,7 +49,8 @@ deploy_dir="$repo_root/deploy"
 }
 
 changed=0
-for f in "$deploy_dir"/*.yaml; do
+# The root entry and one level of overlays (base/, prod/, dev/).
+for f in "$deploy_dir"/*.yaml "$deploy_dir"/*/*.yaml; do
   [ -f "$f" ] || continue
   tmp="$f.rename.$$"
   # Order matters: the longer CNPG-secret suffix is handled before `app-db`, and
@@ -79,4 +81,5 @@ for f in "$deploy_dir"/*.yaml; do
 done
 
 echo "Renamed placeholders to '$name' across $changed file(s) in deploy/."
-echo "Next: review with 'git diff', then 'kubectl kustomize deploy/' to confirm it builds."
+echo "Next: review with 'git diff', then 'kubectl kustomize deploy/' (production) and"
+echo "      'kubectl kustomize deploy/dev' to confirm both build."

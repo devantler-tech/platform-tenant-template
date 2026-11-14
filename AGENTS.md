@@ -21,9 +21,24 @@ platform Kubernetes cluster as an OCI-packaged Kustomize app.>
 
 ## Structure
 
-- `deploy/` — Kustomize manifests for the platform cluster (Deployment, Service,
-  HTTPRoute, an optional CNPG Cluster, and — when the app needs secrets — a
-  namespaced `SecretStore` + `ExternalSecret` sourcing them from OpenBao).
+- `deploy/` — Kustomize manifests for the platform cluster, published as one
+  signed OCI artifact and split so production and dev share one copy of each
+  manifest:
+  - `deploy/kustomization.yaml` — the production entry the platform reconciles
+    at `path: .`. It includes only `prod`.
+  - `deploy/base/` — what both environments run: the Deployment (whose app
+    container receives the published image digest), Service, network policy and
+    an optional CNPG Cluster.
+  - `deploy/prod/` — `../base` plus what only production runs: the public
+    HTTPRoute, the PodDisruptionBudget, and — when the app needs secrets — the
+    namespaced `SecretStore` + `ExternalSecret` reading production paths in
+    OpenBao. Anything holding a production hostname, credential, database or
+    bucket goes here.
+  - `deploy/dev/` — `../base` changed only by kustomize patches (one replica).
+    Never copy a base manifest into it, and never add a route, PDB or production
+    secret path: the platform owns dev ingress behind sign-on and reconciles
+    dev at `path: ./dev` into a `<tenant>-dev` namespace
+    ([platform#6126](https://github.com/devantler-tech/platform/issues/6126)).
 - `.github/workflows/` — `ci.yaml` (PR gate), `release.yaml` (semantic-release on
   `main`), `cd.yaml` (publish the signed OCI artifact on `v*` tags).
 
@@ -31,7 +46,8 @@ platform Kubernetes cluster as an OCI-packaged Kustomize app.>
 
 <Mirror CI (`.github/workflows/ci.yaml`) — the lint/test/build commands your stack
 runs. Keep its delivery-input gate: build the tenant image and render `deploy/`
-before merge, then include every job in `ci-required-checks`.>
+before merge (the production entry and the `deploy/dev` overlay), then include
+every job in `ci-required-checks`.>
 
 ## Maintenance (autonomous AI engineer)
 

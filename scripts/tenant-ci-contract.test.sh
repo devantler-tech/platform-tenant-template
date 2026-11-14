@@ -88,7 +88,7 @@ validate_contract() {
 	'
 	assert_ci "manifest-render step must have only audited keys" '
 		((.jobs."delivery-inputs".steps[3] | keys | sort | join(",")) == "name,run,shell,working-directory")
-		and (.jobs."delivery-inputs".steps[3].run == "kubectl kustomize deploy/ >/dev/null")
+		and (.jobs."delivery-inputs".steps[3].run == "kubectl kustomize deploy/ >/dev/null && kubectl kustomize deploy/dev >/dev/null")
 		and (.jobs."delivery-inputs".steps[3].shell == "bash")
 		and (.jobs."delivery-inputs".steps[3]."working-directory" == ".")
 	'
@@ -125,7 +125,7 @@ validate_contract() {
 	'
 	assert_ci "tenant manifest render is missing" '
 		[.jobs."delivery-inputs".steps[] | select(
-			(.run // "") == "kubectl kustomize deploy/ >/dev/null"
+			(.run // "") == "kubectl kustomize deploy/ >/dev/null && kubectl kustomize deploy/dev >/dev/null"
 		)] | length == 1
 	'
 	assert_ci "required-check aggregate must depend on all four jobs exactly" \
@@ -335,7 +335,7 @@ run_mutation "workflow secret environment added" \
 run_mutation "container build removed" \
 	'del(.jobs."delivery-inputs".steps[] | select((.run // "") == "docker build --tag tenant-delivery-check ."))'
 run_mutation "manifest render removed" \
-	'del(.jobs."delivery-inputs".steps[] | select((.run // "") == "kubectl kustomize deploy/ >/dev/null"))'
+	'del(.jobs."delivery-inputs".steps[] | select((.run // "") == "kubectl kustomize deploy/ >/dev/null && kubectl kustomize deploy/dev >/dev/null"))'
 run_mutation "checkout credentials retained" \
 	'.jobs."delivery-inputs".steps[] |= (select(.uses | test("^actions/checkout@[0-9a-f]{40}$")).with."persist-credentials" = true)'
 run_mutation "second mutable checkout added" \
@@ -360,6 +360,8 @@ run_mutation "image build shell replaced with no-op" \
 	'.jobs."delivery-inputs".steps[2].shell = "echo {0}"'
 run_mutation "manifest render redirected to decoy" \
 	'.jobs."delivery-inputs".steps[3]."working-directory" = "fixtures/valid"'
+run_mutation "dev overlay render dropped" \
+	'.jobs."delivery-inputs".steps[3].run = "kubectl kustomize deploy/ >/dev/null"'
 run_mutation "job permissions broadened" \
 	'.jobs."delivery-inputs".permissions.packages = "write"'
 run_mutation "delivery dependency removed from aggregate" \

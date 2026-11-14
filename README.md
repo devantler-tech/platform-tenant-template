@@ -20,10 +20,15 @@ running cluster is needed for this first result:
 git clone https://github.com/devantler-tech/platform-tenant-template.git
 cd platform-tenant-template
 kubectl kustomize deploy/
+kubectl kustomize deploy/dev
 ```
 
-Success is exit 0 with the example resources printed as YAML, including the
-Deployment, Service and HTTPRoute. Names and image values are placeholders.
+Success is exit 0 for both, with the example resources printed as YAML. `deploy/`
+renders production, including the Deployment, Service and HTTPRoute. `deploy/dev`
+renders the dev overlay: the same Deployment, Service, network policy and
+database at one replica, without the public route, disruption budget or
+production secrets. [The deploy layout](docs/REFERENCE.md#the-deploy-layout)
+explains where each manifest goes. Names and image values are placeholders.
 Rendering does not validate every CRD field, deploy an app or prove platform
 registration. Do not apply this unmodified scaffold to a cluster.
 
@@ -55,7 +60,8 @@ the CLI route below.
    The name must equal the repository name. [What the rename changes](docs/REFERENCE.md#what-the-rename-changes)
    lists everything it touches. Run it only in your generated app repository,
    never in an upstream contribution checkout. Review `git diff` and run
-   `kubectl kustomize deploy/` again; this is still only a local render.
+   `kubectl kustomize deploy/` and `kubectl kustomize deploy/dev` again; this is
+   still only a local render.
 3. **Replace the example with your app:** application code, `Dockerfile`, the
    example stack job in `.github/workflows/ci.yaml`, and `AGENTS.md`.
 4. **Protect your own files from the weekly sync.** Tailor the supplied
@@ -71,8 +77,8 @@ the CLI route below.
 5. **Register the tenant on the platform.** Follow
    [`platform/docs/TENANTS.md`](https://github.com/devantler-tech/platform/blob/main/docs/TENANTS.md).
 
-Default PR CI always builds the tenant image and renders `deploy/` before merge,
-using no secrets or write authority. Keep the `delivery-inputs` job and its entry
+Default PR CI always builds the tenant image and renders `deploy/` and its
+`deploy/dev` overlay before merge, using no secrets or write authority. Keep the `delivery-inputs` job and its entry
 in `ci-required-checks` when you replace the example job with your stack's lint,
 test, and build commands. This catches the same image and manifest failures in
 the pull request that introduced them instead of during release or reconciliation.

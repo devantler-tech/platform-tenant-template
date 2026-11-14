@@ -1,12 +1,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# Production entry point. The platform reconciles the published manifests
+# artifact at `path: .`, which is this file, so it must only include ./prod.
+# Shared manifests live in ./base, production-only ones in ./prod, and the dev
+# overlay in ./dev (reconciled at `path: ./dev` into the `<tenant>-dev`
+# namespace).
 resources:
-  - deployment.yaml
-  - poddisruptionbudget.yaml # drain-safe maxUnavailable:1 PDB so node drains never deadlock (platform#1882)
-  - httproute.yaml
-  - service.yaml
-  - networkpolicy.yaml # re-opens Gateway ingress + DB/DNS egress under the platform's default-deny
-  - cluster.yaml # CloudNativePG database — delete this line if your tenant has no DB
-  # OpenBao-backed secrets via External Secrets — delete both if you need none:
-  - secretstore.yaml
-  - externalsecret.yaml
+  - prod

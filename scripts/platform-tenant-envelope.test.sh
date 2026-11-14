@@ -173,8 +173,8 @@ validate_openbao_authorization() (
 	for required_file in \
 		"$vault_config" \
 		"$rename_script" \
-		"$scaffold_root/deploy/secretstore.yaml" \
-		"$scaffold_root/deploy/externalsecret.yaml"
+		"$scaffold_root/deploy/prod/secretstore.yaml" \
+		"$scaffold_root/deploy/prod/externalsecret.yaml"
 	do
 		[ -f "$required_file" ] || fail "OpenBao authorization source is missing: $required_file"
 	done
@@ -186,8 +186,8 @@ validate_openbao_authorization() (
 	cp "$rename_script" "$renamed_scaffold/scripts/rename-placeholders.sh"
 	sh "$renamed_scaffold/scripts/rename-placeholders.sh" "$tenant_name" >/dev/null
 
-	secret_store=$renamed_scaffold/deploy/secretstore.yaml
-	external_secret=$renamed_scaffold/deploy/externalsecret.yaml
+	secret_store=$renamed_scaffold/deploy/prod/secretstore.yaml
+	external_secret=$renamed_scaffold/deploy/prod/externalsecret.yaml
 	expected_remote_key=apps/$tenant_name/config
 	export tenant_name expected_remote_key
 
@@ -905,11 +905,11 @@ run_vault_duplicate "tenant policy declared twice" \
 run_vault_duplicate "tenant Kubernetes-auth role declared twice" \
 	'bao write auth/kubernetes/role/ascoachingogvaner' 'ttl=1h'
 run_vault_prefixed_role_control "another tenant role starts with this tenant name"
-run_scaffold_mutation "scaffold OpenBao role changed" deploy/secretstore.yaml \
+run_scaffold_mutation "scaffold OpenBao role changed" deploy/prod/secretstore.yaml \
 	'.spec.provider.vault.auth.kubernetes.role = "another-tenant"'
-run_scaffold_mutation "scaffold OpenBao ServiceAccount changed" deploy/secretstore.yaml \
+run_scaffold_mutation "scaffold OpenBao ServiceAccount changed" deploy/prod/secretstore.yaml \
 	'.spec.provider.vault.auth.kubernetes.serviceAccountRef.name = "another-tenant"'
-run_scaffold_mutation "scaffold OpenBao path crossed into another tenant" deploy/externalsecret.yaml \
+run_scaffold_mutation "scaffold OpenBao path crossed into another tenant" deploy/prod/externalsecret.yaml \
 	'.spec.data[0].remoteRef.key = "apps/another-tenant/config"'
 run_mutation "KRO managed-by label removed" "$rgd_path" \
 	'del(.spec.resources[] | select(.id == "tenantNamespace").template.metadata.labels."app.kubernetes.io/managed-by")'

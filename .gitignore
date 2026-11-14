@@ -1,5 +1,5 @@
 # Never commit plaintext secrets — tenant secrets live in OpenBao and are
-# delivered into the cluster via External Secrets (see deploy/externalsecret.yaml).
+# delivered into the cluster via External Secrets (see deploy/prod/externalsecret.yaml).
 .env
 .env.*
 !.env.example

@@ -26,7 +26,8 @@ permissions: {}
 # this template's core deliverable — every new tenant inherits them — so a PR that
 # breaks the kustomization (a renamed/removed resource, a YAML error) must not
 # merge green and ship broken scaffolding downstream. Eight layers run here:
-#   1. schema-validate the deploy/ manifests (a typo'd CRD field that renders
+#   1. schema-validate the deploy/ production entry and its dev overlay, and
+#      keep dev free of production-only objects (a typo'd CRD field that renders
 #      without complaint must fail loudly), and
 #   2. exercise scripts/rename-placeholders.sh — the onboarding script every new
 #      tenant runs first; a botched sed address (a missed file, a corrupted label
@@ -373,8 +374,9 @@ jobs:
           key: kubeconform-crds-${{ env.CRDS_CATALOG_REF }}
       - name: 🧱 Build & schema-validate deploy/ manifests
         # kubectl (with embedded kustomize) is preinstalled on ubuntu-latest. Render
-        # the manifests (a broken kustomization fails the render, not silently
-        # downstream), then schema-validate every rendered resource with kubeconform —
+        # the production entry and the dev overlay (a broken kustomization fails
+        # the render, not silently downstream), then schema-validate every
+        # rendered resource with kubeconform —
         # the devantler-tech-standard manifest validator (KSail embeds it; the
         # platform's gitops-repo-audit skill uses it). Standard Kubernetes kinds
         # validate against kubeconform's built-in default schemas; the CRD-backed
@@ -396,7 +398,32 @@ jobs:
           echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
           tar -xzf kubeconform.tar.gz kubeconform
           # Render first (broken kustomization fails here), then schema-validate.
+          # deploy/ is the production entry the platform reconciles at `path: .`;
+          # it must render exactly deploy/prod. deploy/dev is the dev overlay.
           kubectl kustomize deploy/ > rendered.yaml
+          kubectl kustomize deploy/prod > rendered-prod.yaml
+          kubectl kustomize deploy/dev > rendered-dev.yaml
+          cmp -s rendered.yaml rendered-prod.yaml || {
+            echo "::error::deploy/kustomization.yaml must include only ./prod, so deploy/ and deploy/prod render the same objects"
+            exit 1
+          }
+          # Dev shares the base but none of production's identity: one replica,
+          # no disruption budget, public route or production secret path.
+          for kind in PodDisruptionBudget HTTPRoute Gateway Certificate Issuer SecretStore ExternalSecret; do
+            KIND="${kind}" yq eval-all -e '[.] | map(select(.kind == strenv(KIND))) | length == 0' rendered-dev.yaml >/dev/null || {
+              echo "::error::deploy/dev renders a ${kind}; keep it in deploy/prod"
+              exit 1
+            }
+          done
+          yq eval-all -e '[.] | map(select(.kind == "Deployment")) | [(length == 1), (.[0].spec.replicas == 1)] | all' rendered-dev.yaml >/dev/null || {
+            echo "::error::deploy/dev must run exactly one replica of the base Deployment"
+            exit 1
+          }
+          # A hostname, not the platform.devantler.tech/ label prefix.
+          if grep -Eq '[a-z0-9-]\.platform\.devantler\.tech' rendered-dev.yaml; then
+            echo "::error::deploy/dev renders a production hostname"
+            exit 1
+          fi
           # Short retry absorbs a transient catalog blip while (re)populating the cache;
           # a cache hit needs no network and succeeds on the first attempt. Fold stderr
           # into the capture (2>&1) so the Skipped:0 assertion below reads kubeconform's
@@ -408,7 +435,7 @@ jobs:
                 -cache .kubeconform-cache \
                 -schema-location default \
                 -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/${CRDS_CATALOG_REF}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-                rendered.yaml 2>&1 | tee kubeconform.out; then
+                rendered.yaml rendered-dev.yaml 2>&1 | tee kubeconform.out; then
               ok=1
               break
             fi

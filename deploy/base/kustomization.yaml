@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Everything production (../prod) and dev (../dev) share. Put a manifest here
+# only when both environments run it unchanged; prod-only objects go in
+# ../prod, and dev changes these objects with patches in ../dev.
+resources:
+  - deployment.yaml
+  - service.yaml
+  - networkpolicy.yaml # re-opens Gateway ingress + DB/DNS egress under the platform's default-deny
+  - cluster.yaml # CloudNativePG database — delete this line if your tenant has no DB

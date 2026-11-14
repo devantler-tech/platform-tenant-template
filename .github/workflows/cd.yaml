@@ -20,7 +20,8 @@ jobs:
     uses: devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812 # v19.0.5
     with:
       # publish-app pins the freshly built image digest into the container with
-      # this name in deploy/deployment.yaml. Keep that container's name equal to
+      # this name in deploy/base/deployment.yaml (deploy/deployment.yaml in a
+      # tenant without deploy/base/). Keep that container's name equal to
       # the repository name (the platform's signed-publish convention).
       app-name: ${{ github.event.repository.name }}
       # The signature this publish mints carries the `uses:` ref above in its

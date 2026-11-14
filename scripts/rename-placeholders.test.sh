@@ -3,7 +3,8 @@
 #
 # rename-placeholders.sh is the first thing a newcomer runs after `Use this
 # template` — it rewrites the `app`, REPLACE_ME, and `replace-me` placeholders
-# across deploy/*.yaml into the tenant's real name. A silent regression ships
+# across deploy/ (the root entry and its base/, prod/ and dev/ overlays) into
+# the tenant's real name. A silent regression ships
 # broken manifests to every tenant created from this scaffold, and it had no
 # other coverage. The existing validation gate schema-validates the *unrenamed*
 # manifests but never runs the rename, so a botched sed address would pass green.
@@ -19,7 +20,9 @@
 #     repointed to the tenant name alongside the uppercase placeholders,
 #   * invalid (non-DNS-1123) names are rejected without mutating anything,
 #   * no stray sed temp files are left behind, and
-#   * the renamed scaffold still `kubectl kustomize`-builds (CI only).
+#   * the dev overlay's replica override and patch follow the rename, and
+#   * the renamed production entry and dev overlay still `kubectl kustomize`-build
+#     (CI only).
 #
 # It runs the script against a throwaway copy so the real working tree is never
 # mutated. Run locally with `sh scripts/rename-placeholders.test.sh`; CI runs it
@@ -33,6 +36,14 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fail() {
 	echo "FAIL: $*" >&2
 	exit 1
+}
+
+# Every manifest under a deploy/ tree — the root entry and its base/, prod/ and
+# dev/ overlays — concatenated in a stable order.
+deploy_yaml() {
+	find "$1" -type f -name '*.yaml' | LC_ALL=C sort | while IFS= read -r manifest; do
+		cat "$manifest"
+	done
 }
 
 # Build a throwaway copy of the working tree so the real tree is never mutated
@@ -51,13 +62,13 @@ script="./scripts/rename-placeholders.sh"
 deploy="deploy"
 
 # --- Guardrails: each must reject and exit non-zero, mutating nothing ----------
-snapshot_before="$(cat "$deploy"/*.yaml)"
+snapshot_before="$(deploy_yaml "$deploy")"
 for bad in "My Tenant" "UPPER" "-bad" "bad-" "with_underscore"; do
 	if "$script" "$bad" >/dev/null 2>&1; then
 		fail "expected rejection of invalid DNS-1123 name: '$bad'"
 	fi
 done
-[ "$(cat "$deploy"/*.yaml)" = "$snapshot_before" ] ||
+[ "$(deploy_yaml "$deploy")" = "$snapshot_before" ] ||
 	fail "a rejected invocation modified deploy/ — guardrails must bail out first"
 
 homepage_route_contract() {
@@ -72,7 +83,7 @@ homepage_route_contract() {
 	' "$1" >/dev/null 2>&1
 }
 
-homepage_route_contract "$deploy/httproute.yaml" ||
+homepage_route_contract "$deploy/prod/httproute.yaml" ||
 	fail "scaffold HTTPRoute does not expose the complete Homepage discovery contract"
 
 # Publication replaces this explicit placeholder with the built digest. Even the
@@ -80,11 +91,11 @@ homepage_route_contract "$deploy/httproute.yaml" ||
 scaffold_image_contract() {
 	yq eval -e '.spec.template.spec.containers[0].image == "ghcr.io/devantler-tech/REPLACE_ME:0.0.0"' "$1" >/dev/null 2>&1
 }
-scaffold_image_contract "$deploy/deployment.yaml" ||
+scaffold_image_contract "$deploy/base/deployment.yaml" ||
 	fail "scaffold image must use its explicit versioned placeholder"
 for bad_image in ghcr.io/devantler-tech/REPLACE_ME:latest ghcr.io/devantler-tech/REPLACE_ME ghcr.io/another/REPLACE_ME:0.0.0; do
 	mutant="${work}/image-mutant.yaml"
-	BAD_IMAGE="$bad_image" yq eval '.spec.template.spec.containers[0].image = strenv(BAD_IMAGE)' "$deploy/deployment.yaml" > "$mutant"
+	BAD_IMAGE="$bad_image" yq eval '.spec.template.spec.containers[0].image = strenv(BAD_IMAGE)' "$deploy/base/deployment.yaml" > "$mutant"
 	if scaffold_image_contract "$mutant"; then
 		fail "image contract accepted $bad_image"
 	fi
@@ -93,7 +104,7 @@ done
 for annotation in href pod-selector; do
 	mutant="${work}/homepage-${annotation}-mutant.yaml"
 	yq eval "del(.metadata.annotations.\"gethomepage.dev/${annotation}\")" \
-		"$deploy/httproute.yaml" > "$mutant"
+		"$deploy/prod/httproute.yaml" > "$mutant"
 	if homepage_route_contract "$mutant"; then
 		fail "Homepage contract accepted a route without gethomepage.dev/${annotation}"
 	fi
@@ -122,13 +133,13 @@ yq eval ".spec.hostnames += [\"${custom_local_hostname}\", \"${custom_prod_hostn
 	.metadata.annotations.\"gethomepage.dev/description\" = \"${custom_description}\" |
 	.metadata.annotations.\"gethomepage.dev/group\" = \"${custom_group}\" |
 	.metadata.annotations.\"gethomepage.dev/icon\" = \"${custom_icon}\"" \
-	"$deploy/httproute.yaml" > "$deploy/httproute-with-custom.yaml"
-mv "$deploy/httproute-with-custom.yaml" "$deploy/httproute.yaml"
+	"$deploy/prod/httproute.yaml" > "$deploy/prod/httproute-with-custom.yaml"
+mv "$deploy/prod/httproute-with-custom.yaml" "$deploy/prod/httproute.yaml"
 
 # --- Happy path ---------------------------------------------------------------
 "$script" "$NAME" >/dev/null
 
-all="$(cat "$deploy"/*.yaml)"
+all="$(deploy_yaml "$deploy")"
 
 # 1) REPLACE_ME fully repointed (container image + OpenBao KV path); none remain.
 printf '%s\n' "$all" | grep -qF "ghcr.io/devantler-tech/${NAME}:0.0.0" ||
@@ -159,7 +170,7 @@ for field_and_value in \
 	"icon=${custom_icon}"; do
 	field="${field_and_value%%=*}"
 	expected="${field_and_value#*=}"
-	actual="$(yq eval ".metadata.annotations.\"gethomepage.dev/${field}\"" "$deploy/httproute.yaml")"
+	actual="$(yq eval ".metadata.annotations.\"gethomepage.dev/${field}\"" "$deploy/prod/httproute.yaml")"
 	[ "$actual" = "$expected" ] ||
 		fail "Homepage ${field} expected '${expected}' after rename, found '${actual}'"
 done
@@ -190,7 +201,7 @@ printf '%s\n' "$all" | grep -qF "name: openbao" ||
 
 # 6) The lowercase `replace-me` Vault role / ServiceAccount placeholders are
 #    repointed to the tenant name too; no tenant-identity placeholder survives.
-grep -qE "^[[:space:]]*role: \"${NAME}\"$" "$deploy/secretstore.yaml" ||
+grep -qE "^[[:space:]]*role: \"${NAME}\"$" "$deploy/prod/secretstore.yaml" ||
 	fail "SecretStore Vault role not renamed to ${NAME}"
 if ! awk -v expected="name: \"${NAME}\"" '
 	/^[[:space:]]*serviceAccountRef:[[:space:]]*$/ { in_ref = 1; next }
@@ -202,13 +213,20 @@ if ! awk -v expected="name: \"${NAME}\"" '
 		exit 0
 	}
 	END { if (!found) exit 1 }
-' "$deploy/secretstore.yaml"; then
+' "$deploy/prod/secretstore.yaml"; then
 	fail "SecretStore ServiceAccount reference not exactly ${NAME}"
 fi
-grep -qF "replace-me" "$deploy/secretstore.yaml" &&
+grep -qF "replace-me" "$deploy/prod/secretstore.yaml" &&
 	fail "a lowercase 'replace-me' tenant-identity placeholder survived the rename"
 [ "$(cat "$scope_fixture")" = "$scope_before" ] ||
 	fail "rename touched unrelated role/name fields"
+
+# 6b) The dev overlay's targets follow the rename. Kustomize skips a patch whose
+#     target names no object without any error, so check the names themselves.
+[ "$(yq eval '.replicas[0].name' "$deploy/dev/kustomization.yaml")" = "$NAME" ] ||
+	fail "dev overlay replica override does not target the renamed Deployment"
+[ "$(yq eval '.patches[0].target.name' "$deploy/dev/kustomization.yaml")" = "$NAME" ] ||
+	fail "dev overlay patch does not target the renamed Deployment"
 
 # 7) No stray temp files left behind by the in-place sed.
 if git status --porcelain --untracked-files=all | grep -q '\.rename\.'; then
@@ -217,7 +235,7 @@ fi
 
 # 8) Idempotent: a second run with the same name changes nothing more.
 "$script" "$NAME" >/dev/null
-[ "$(cat "$deploy"/*.yaml)" = "$all" ] ||
+[ "$(deploy_yaml "$deploy")" = "$all" ] ||
 	fail "a second rename mutated deploy/ — the script is not idempotent"
 
 # 9) Cross-checkout invocation (#61): a path-qualified call from an UNRELATED
@@ -229,13 +247,13 @@ rm -rf "$other/.git"
 git init -q "$other"
 git init -q "$caller_repo"
 cp -R "$repo_root/deploy" "$caller_repo/deploy"
-caller_before="$(cat "$caller_repo"/deploy/*.yaml)"
+caller_before="$(deploy_yaml "$caller_repo/deploy")"
 (cd "$caller_repo" && "$other/scripts/rename-placeholders.sh" cross-tenant >/dev/null)
-[ "$(cat "$caller_repo"/deploy/*.yaml)" = "$caller_before" ] ||
+[ "$(deploy_yaml "$caller_repo/deploy")" = "$caller_before" ] ||
 	fail "cross-checkout invocation mutated the CALLER's deploy/ (#61)"
-cat "$other"/deploy/*.yaml | grep -qF "cross-tenant.platform.lan" ||
+deploy_yaml "$other/deploy" | grep -qF "cross-tenant.platform.lan" ||
 	fail "cross-checkout invocation did not rename the scaffold owning the script (#61)"
-cat "$other"/deploy/*.yaml | grep -qF "cross-tenant.platform.devantler.tech" ||
+deploy_yaml "$other/deploy" | grep -qF "cross-tenant.platform.devantler.tech" ||
 	fail "cross-checkout invocation did not rename the production hostname (#99)"
 
 # 10) The renamed scaffold still builds (CI has kubectl preinstalled; skip locally
@@ -243,8 +261,16 @@ cat "$other"/deploy/*.yaml | grep -qF "cross-tenant.platform.devantler.tech" ||
 if command -v kubectl >/dev/null 2>&1; then
 	kubectl kustomize "$deploy" >/dev/null ||
 		fail "renamed deploy/ no longer 'kubectl kustomize'-builds"
+	dev_render=$(kubectl kustomize "$deploy/dev") ||
+		fail "renamed deploy/dev no longer 'kubectl kustomize'-builds"
+	# shellcheck disable=SC2016 # yq expression, not shell.
+	printf '%s\n' "$dev_render" | NAME="$NAME" yq eval-all -e '
+		[.] | map(select(.kind == "Deployment"))
+		| [(length == 1), (.[0].metadata.name == strenv(NAME)), (.[0].spec.replicas == 1)]
+		| all
+	' - >/dev/null || fail "renamed dev overlay does not run exactly one replica of ${NAME}"
 else
 	echo "note: kubectl not found — skipping the kustomize-build assertion (CI enforces it)"
 fi
 
-echo "PASS: rename-placeholders.sh end-to-end (guardrails + placeholder/app rename + label-key/CNPG-suffix/openbao invariants + idempotency + cross-checkout targeting + build)"
+echo "PASS: rename-placeholders.sh end-to-end (guardrails + placeholder/app rename + label-key/CNPG-suffix/openbao invariants + idempotency + cross-checkout targeting + dev overlay + build)"

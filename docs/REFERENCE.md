@@ -1,13 +1,14 @@
 # Template reference
 
-The detail behind the [README](../README.md): what the placeholder rename changes, which files the
-template keeps in sync and which are yours, how publishing works, and how to validate the template
-locally.
+The detail behind the [README](../README.md): what the placeholder rename changes, how `deploy/` is
+laid out, which files the template keeps in sync and which are yours, how publishing works, and how
+to validate the template locally.
 
 ## What the rename changes
 
 `scripts/rename-placeholders.sh` rewrites the `app`, `REPLACE_ME`, and `replace-me`
-placeholders in `deploy/` consistently, including the container name, Vault role,
+placeholders across `deploy/` and its `base/`, `prod/` and `dev/` overlays
+consistently, including the container name, Vault role,
 and ServiceAccount. Those values **must** equal the repository name (see the
 convention under [How publishing works](#how-publishing-works)). The helper
 preserves the `app.kubernetes.io/name` label *keys*, CloudNativePG's literal `-app`
@@ -16,7 +17,7 @@ half-wrong. It's a one-shot helper, so delete it once adopted.
 
 The example route is renamed for both environments: `<tenant>.platform.lan`
 locally and `<tenant>.platform.devantler.tech` in production, both in
-`deploy/httproute.yaml`. Add any custom domains beside them; a tenant that moves
+`deploy/prod/httproute.yaml`. Add any custom domains beside them; a tenant that moves
 to its own canonical domain may drop the `platform.devantler.tech` hostname. Each
 Platform Gateway attaches only the hostnames its listener serves.
 
@@ -26,6 +27,43 @@ group, and icon annotations after the rename to describe your app. If you drop
 the `platform.devantler.tech` hostname, point the tile's `gethomepage.dev/href`
 annotation at your canonical domain too, or the tile links to an address the
 route no longer serves.
+
+## The deploy layout
+
+Every custom-built app gets a production and a dev environment. Both reconcile
+the same signed artifact, which holds the whole `deploy/` tree, so the tree is
+split into Kustomize overlays that share one copy of each manifest:
+
+```text
+deploy/
+├── kustomization.yaml   # production entry: includes only ./prod
+├── base/                # what production and dev both run
+├── prod/                # ../base + production-only objects
+└── dev/                 # ../base + dev patches
+```
+
+- **`deploy/kustomization.yaml`** is what the platform reconciles for production,
+  at `path: .`. Keep it to `resources: [prod]`.
+- **`deploy/base/`** holds every manifest both environments run unchanged: the
+  Deployment, whose app container receives the published image digest, the
+  Service, the network policy and an optional CNPG database. In dev that
+  database is a separate, empty instance in the dev namespace.
+- **`deploy/prod/`** adds what only production runs: public routes and
+  hostnames, certificates and DNS, PodDisruptionBudgets, backups, and anything
+  that reads production data or holds a production credential or secret path,
+  such as the OpenBao `SecretStore` and `ExternalSecret`.
+- **`deploy/dev/`** changes base objects only with Kustomize `replicas` and
+  `patches`, never a copied manifest. It runs one replica and adds no route,
+  PDB, backup or production secret path: the platform reconciles it at
+  `path: ./dev` into a `<tenant>-dev` namespace and owns its ingress behind
+  sign-on ([platform#6126](https://github.com/devantler-tech/platform/issues/6126)).
+  Turn on experimental features here only through runtime settings, such as an
+  environment variable patched onto the Deployment.
+
+Overlays reference only `../base` and their own files, so every directory builds
+under Kustomize's default load restrictions. A secret the app needs in both
+environments needs a dev source of its own in `deploy/dev`; reference a
+production-only secret from a patch in `deploy/prod`.
 
 ## What the template owns vs. what you own
 
@@ -63,7 +101,7 @@ tenant still carrying these from an older sync can delete them for good):**
 
 | File | Purpose |
 |---|---|
-| `.github/workflows/validate-scaffold.yaml` | Renders `deploy/`, schema-validates every resource, applies the live Platform/shared Kyverno policies, and exercises a pinned Kubernetes API. The live checks prove the template publishes through the pinned signing workflow; Platform still wires the private GHCR pull credential to the tenant identity and cosign-verifying OCI source; and Flux consumes that source while impersonating and targeting the managed `restricted` namespace for both KRO and manual registrations. They then prove the Deployment passes Pod Security `restricted`, the tenant identity can reconcile every rendered kind, and cluster-scoped or interactive privileges remain denied. It gates template PRs, re-validates `main` after every merge, and rechecks upstream drift every day at 06:17 UTC (or on manual dispatch), keeping one tracking issue open while that scheduled check fails on `main`; structural mutation tests keep every layer fail-closed. The workflow no-ops in tenants and is scaffold-time only |
+| `.github/workflows/validate-scaffold.yaml` | Renders `deploy/` and `deploy/dev`, schema-validates every resource, keeps dev free of production-only objects, applies the live Platform/shared Kyverno policies, and exercises a pinned Kubernetes API. The live checks prove the template publishes through the pinned signing workflow; Platform still wires the private GHCR pull credential to the tenant identity and cosign-verifying OCI source; and Flux consumes that source while impersonating and targeting the managed `restricted` namespace for both KRO and manual registrations. They then prove the Deployment passes Pod Security `restricted`, the tenant identity can reconcile every rendered kind, and cluster-scoped or interactive privileges remain denied. It gates template PRs, re-validates `main` after every merge, and rechecks upstream drift every day at 06:17 UTC (or on manual dispatch), keeping one tracking issue open while that scheduled check fails on `main`; structural mutation tests keep every layer fail-closed. The workflow no-ops in tenants and is scaffold-time only |
 | `scripts/rename-placeholders.sh` (+ its test) | One-shot rename of the placeholder app to your tenant name |
 | `scripts/agent-instructions.test.sh` | Fails closed if the one-time agent scaffold loses its ownership, dependency-bot, external-code, exact-head review, pinned-merge, or user-path evaluation boundaries, or regains a retired rule |
 | `scripts/workflow-caller-contract.test.sh` | Keeps the portable caller-pin contract wired into tenant CI while validating template-only publisher, release, ownership, and scaffold invariants |
@@ -130,8 +168,9 @@ Tenants own both files, so an existing tenant adds the `build(deps)` rule and
 the `ci` prefix itself.
 Each tag triggers `cd.yaml`, which calls the platform's
 [`publish-app.yaml`](https://github.com/devantler-tech/.github/blob/main/.github/workflows/publish-app.yaml)
-reusable workflow to build the image, **pin its digest into
-`deploy/deployment.yaml`**, push the manifests as an OCI artifact, and
+reusable workflow to build the image, **pin its digest into the app container in
+`deploy/base/deployment.yaml`** (`deploy/deployment.yaml` in a tenant without
+`deploy/base/`), push the whole `deploy/` tree as one OCI artifact, and
 **cosign-sign** both. The platform's `OCIRepository` verifies that signature, so
 only artifacts from this trusted workflow are eligible for reconciliation after
 the platform has registered the tenant and its applicable publisher-approval
@@ -187,7 +226,8 @@ required checks for failures that happen after that snapshot.
 Run these from the repository root. In every tenant, and in this template:
 
 ```sh
-kubectl kustomize deploy/                              # manifests build
+kubectl kustomize deploy/                              # production manifests build
+kubectl kustomize deploy/dev                           # dev overlay builds (tenants with deploy/dev)
 sh scripts/workflow-caller-pin-contract.test.sh       # portable tenant caller-pin contract (resolves the version-comment tag on github.com and compares it with the pinned commit)
 sh scripts/publish-pin-approved.test.sh               # publish-app pin approval check (reads a local approved set, never the network)
 actionlint .github/workflows/*                         # workflows parse

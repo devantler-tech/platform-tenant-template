@@ -56,7 +56,7 @@ jobs:
         shell: bash
         working-directory: .
       - name: 🧱 Render tenant manifests
-        run: kubectl kustomize deploy/ >/dev/null
+        run: kubectl kustomize deploy/ >/dev/null && kubectl kustomize deploy/dev >/dev/null
         shell: bash
         working-directory: .
 

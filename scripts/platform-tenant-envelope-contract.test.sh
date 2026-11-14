@@ -71,8 +71,8 @@ validate_contract() {
 		'resource-graph-definitions/tenant/resource-graph-definition.yaml' \
 		'k8s/bases/infrastructure/vault-config/job.yaml' \
 		'k8s/bases/apps/ascoachingogvaner' \
-		'deploy/secretstore.yaml' \
-		'deploy/externalsecret.yaml' \
+		'deploy/prod/secretstore.yaml' \
+		'deploy/prod/externalsecret.yaml' \
 		'namespace.yaml' \
 		'service-account.yaml' \
 		'external-secret.yaml' \

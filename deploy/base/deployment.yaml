@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/name: app
     # The platform's `validate-replica-floor` Kyverno policy (Audit) flags any
     # Deployment/StatefulSet under 2 replicas — the platform HA floor that makes
-    # the drain-safe `maxUnavailable: 1` PDB (poddisruptionbudget.yaml) actually
+    # the drain-safe `maxUnavailable: 1` PDB (../prod/poddisruptionbudget.yaml) actually
     # preserve availability through a node drain (see platform#1882; the paired
     # `validate-replica-ceiling` policy caps tenants at 3). The scaffold ships a
     # single replica (a fresh tenant starts small), so it opts out explicitly
@@ -56,7 +56,7 @@ spec:
           type: RuntimeDefault
       # The app never talks to the Kubernetes API, so don't mount an API token
       # into the pod (the platform-provisioned tenant ServiceAccount is used by
-      # External Secrets' Vault auth via secretstore.yaml, not by this pod).
+      # External Secrets' Vault auth via ../prod/secretstore.yaml, not by this pod).
       # Remove this only if your app genuinely calls the API.
       automountServiceAccountToken: false
       # Spread replicas across nodes so a scale-up to 2-3 replicas is actually
