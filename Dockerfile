@@ -7,7 +7,7 @@
 # probes. Replace it with your stack's (typically multi-stage) build.
 FROM python:3.16.0a1-alpine
 WORKDIR /app
-RUN printf '<!doctype html><title>platform-tenant-template</title><h1>Replace this placeholder with your app.</h1>\n' > index.html
+RUN printf '<!doctype html><title>application-template</title><h1>Replace this placeholder with your app.</h1>\n' > index.html
 EXPOSE 3000
 USER 1000
 CMD ["python", "-m", "http.server", "3000"]

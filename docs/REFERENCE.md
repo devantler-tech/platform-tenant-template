@@ -1,18 +1,44 @@
 # Template reference
 
-The detail behind the [README](../README.md): what the placeholder rename changes, which files the
-template keeps in sync and which are yours, how publishing works, and how to validate the template
-locally.
+The detail behind the [README](../README.md): what the scaffold and the placeholder rename change,
+which files the template keeps in sync and which are yours, how publishing works, and how to validate
+the template locally.
+
+## What the scaffold changes
+
+`scripts/scaffold.sh <go|dotnet|none> [--tenancy] [name]` runs once in a repository created from
+this template. `name` defaults to the checkout's directory name and must be a DNS-1123 label equal
+to the repository name.
+
+- **Stack.** `go` and `dotnet` copy `stacks/<stack>/` over the template: the source and tests,
+  lint and analyzer configuration, a Dockerfile, and the stack's CI job, which replaces the
+  placeholder `stack` job in `.github/workflows/ci.yaml`. The stack's Dependabot ecosystem is
+  appended to `.github/dependabot.yml` and its `## Stack` and `## Validation` text replaces the
+  placeholders in `AGENTS.md`. The Go module becomes `github.com/devantler-tech/<name>`; the .NET
+  solution, projects and namespace become the PascalCase form of `<name>`. `none` keeps the
+  placeholder job and Dockerfile for a stack you bring yourself.
+- **Tenancy.** With `--tenancy` the application stays a platform tenant: `deploy/`, `cd.yaml`,
+  the image's Dependabot entry and the CI jobs that guard the image and manifests stay, and
+  `scripts/rename-placeholders.sh` renames `deploy/` (below). Without it, all of them are
+  removed and the tenant-only template files are added to `.templatesyncignore`, so template-sync
+  never brings them back.
+- **Template machinery.** `stacks/`, the scaffold, the template's own validation workflows and its
+  scaffold-time tests are removed; `.templatesyncignore` already lists each of them.
+
+The edits follow `stack`, `tenancy` and `template` markers in `ci.yaml`, `dependabot.yml` and
+`AGENTS.md`, so none are left behind. The CI aggregate consumes `needs.*.result`, so dropping a job
+and its `needs` entry leaves nothing else to edit. The scaffold refuses an unknown stack or option,
+an invalid name, a second run and the upstream template checkout before it changes anything.
 
 ## What the rename changes
 
-`scripts/rename-placeholders.sh` rewrites the `app`, `REPLACE_ME`, and `replace-me`
+With `--tenancy`, `scripts/scaffold.sh` runs `scripts/rename-placeholders.sh`, which rewrites the `app`, `REPLACE_ME`, and `replace-me`
 placeholders in `deploy/` consistently, including the container name, Vault role,
 and ServiceAccount. Those values **must** equal the repository name (see the
 convention under [How publishing works](#how-publishing-works)). The helper
 preserves the `app.kubernetes.io/name` label *keys*, CloudNativePG's literal `-app`
 secret suffix, and the `openbao` SecretStore name. Doing this by hand is easy to get
-half-wrong. It's a one-shot helper, so delete it once adopted.
+half-wrong. It's a one-shot helper: the scaffold removes it once it has run.
 
 The example route is renamed for both environments: `<tenant>.platform.lan`
 locally and `<tenant>.platform.devantler.tech` in production, both in
@@ -45,24 +71,28 @@ restore the tailored guide and commit the ignore entry before merging it;
 changing the ignore file does not undo an existing proposal. To receive a file
 the template excludes, add the line `!<entry>` to your list.
 
-**Owned by the template (kept in sync — do not edit in your tenant):**
+**Owned by the template (kept in sync — do not edit in your application).** Rows marked
+*tenant* exist only in platform tenants; an application scaffolded without `--tenancy` ignores them:
 
 | File | Purpose |
 |---|---|
-| `.github/workflows/cd.yaml` | On a `v*` tag, calls `publish-app.yaml` to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact |
+| `.github/workflows/cd.yaml` (*tenant*) | On a `v*` tag, calls `publish-app.yaml` to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact |
 | `.github/workflows/release.yaml` | semantic-release on `main` (cuts the `v*` tags that drive `cd.yaml`) |
 | `.github/workflows/template-sync.yaml` | Opens the weekly template-sync PR |
 | `CLAUDE.md` | `@AGENTS.md` shim |
 | `docs/REFERENCE.md` | This reference |
-| `scripts/workflow-caller-pin-contract.test.sh` | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
-| `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` | The check a tenant's required CI runs to refuse a changed publisher identity until Platform approves it for that tenant. Legacy revisions use the existing approved set; maintained publishers require an exact canonical approval. The default `ci.yaml` runs the `publish-pin-approved` job and includes it in `ci-required-checks`; this unregistered template runs its tests only. Older tenants that own `ci.yaml` add the job themselves |
+| `scripts/workflow-caller-pin-contract.test.sh` (*tenant*) | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
+| `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` (*tenant*) | The check a tenant's required CI runs to refuse a changed publisher identity until Platform approves it for that tenant. Legacy revisions use the existing approved set; maintained publishers require an exact canonical approval. The default `ci.yaml` runs the `publish-pin-approved` job and includes it in `ci-required-checks`; this unregistered template runs its tests only. Older tenants that own `ci.yaml` add the job themselves |
 | `zizmor.yml` | GitHub Actions pinning policy enforced by the security scan |
 
-**Scaffold-time only (arrives when the repo is created — never re-synced, so a
-tenant still carrying these from an older sync can delete them for good):**
+**Scaffold-time only (arrives when the repo is created, is removed by `scripts/scaffold.sh`, and is
+never re-synced, so a tenant still carrying these from an older sync can delete them for good):**
 
 | File | Purpose |
 |---|---|
+| `stacks/` | The Go and .NET stack sources the scaffold copies once; the copies are then yours |
+| `scripts/scaffold.sh` (+ its test) | One-shot stack and tenancy scaffold; its test scaffolds every combination and checks what each leaves |
+| `.github/workflows/validate-stacks.yaml` | Scaffolds each stack as a tenant, then builds, tests, lints, renders `deploy/`, builds the image and checks it serves `GET /` under the restricted container settings |
 | `.github/workflows/validate-scaffold.yaml` | Renders `deploy/`, schema-validates every resource, applies the live Platform/shared Kyverno policies, and exercises a pinned Kubernetes API. The live checks prove the template publishes through the pinned signing workflow; Platform still wires the private GHCR pull credential to the tenant identity and cosign-verifying OCI source; and Flux consumes that source while impersonating and targeting the managed `restricted` namespace for both KRO and manual registrations. They then prove the Deployment passes Pod Security `restricted`, the tenant identity can reconcile every rendered kind, and cluster-scoped or interactive privileges remain denied. It gates template PRs, re-validates `main` after every merge, and rechecks upstream drift every day at 06:17 UTC (or on manual dispatch), keeping one tracking issue open while that scheduled check fails on `main`; structural mutation tests keep every layer fail-closed. The workflow no-ops in tenants and is scaffold-time only |
 | `scripts/rename-placeholders.sh` (+ its test) | One-shot rename of the placeholder app to your tenant name |
 | `scripts/agent-instructions.test.sh` | Fails closed if the one-time agent scaffold loses its ownership, dependency-bot, external-code, exact-head review, pinned-merge, or user-path evaluation boundaries, or regains a retired rule |
@@ -92,8 +122,12 @@ LICENSE
 deploy/
 .templatesyncignore
 
-# Template scaffolding — dead code in a live tenant; keep ignored so a
+# Template scaffolding — dead code in a live application; keep ignored so a
 # template-sync never re-introduces it after you delete it.
+stacks/
+scripts/scaffold.sh
+scripts/scaffold.test.sh
+.github/workflows/validate-stacks.yaml
 scripts/rename-placeholders.sh
 scripts/rename-placeholders.test.sh
 scripts/agent-instructions.test.sh
@@ -110,6 +144,12 @@ scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh
 scripts/platform-vpa-floor-contract.test.sh
 .github/workflows/validate-scaffold.yaml
+
+# Only without --tenancy: the tenant plumbing the scaffold removed.
+.github/workflows/cd.yaml
+scripts/publish-pin-approved.sh
+scripts/publish-pin-approved.test.sh
+scripts/workflow-caller-pin-contract.test.sh
 ```
 
 `AGENTS.md` and the `maintain` skill ship as scaffolding (a starting point for new
@@ -184,7 +224,7 @@ head, using only Actions read access. It requires a complete clear snapshot in
 addition to successful tenant jobs. Separate workflows still need their own
 required checks for failures that happen after that snapshot.
 
-Run these from the repository root. In every tenant, and in this template:
+Run these from the repository root. In every platform tenant, and in this template:
 
 ```sh
 kubectl kustomize deploy/                              # manifests build
@@ -198,6 +238,7 @@ scaffold-time scripts, but template sync never updates them, so a tenant that
 keeps them runs them against stale copies; live tenants delete and ignore them:
 
 ```sh
+sh scripts/scaffold.test.sh                           # stack and tenancy scaffold, every combination
 sh scripts/rename-placeholders.test.sh                # onboarding contract
 sh scripts/agent-instructions.test.sh                 # agent safety contract
 sh scripts/workflow-caller-contract.test.sh           # template-only caller/scaffold contract
