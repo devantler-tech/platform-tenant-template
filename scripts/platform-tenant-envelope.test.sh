@@ -89,6 +89,14 @@ validate_oidc_subject() (
 			canonical_ref=${refs#*"$separator"}
 			validate_legacy_revision_group "$legacy_ref" "$scope" && validate_revision_group "$canonical_ref" 2
 			;;
+		"$prefix$canonical"*'$')
+			# The generic rule names only the maintained publisher once the deleted
+			# legacy location is retired (platform#6264): one or two literal commits.
+			[ "$scope" = generic ] || exit 1
+			ref=${subject#"$prefix$canonical"}
+			ref=${ref%'$'}
+			validate_revision_group "$ref" 2
+			;;
 		*) exit 1 ;;
 	esac
 )
