@@ -99,11 +99,12 @@ validate_oidc_subject() (
 	if [ -n "$own_repository" ]; then
 		validate_dns_label "$own_repository" || exit 1
 		# Remove only the expected repository's exact alternative, and only as the
-		# group's last entry. Any other own-release text stays in the subject and
-		# fails the literal publisher forms below.
+		# last entry of the outer publisher group. Any other own-release text,
+		# including one inside a publisher's revision group, stays in the subject
+		# and fails the literal publisher forms below.
 		own_alternative="|$own_repository$own_release_tail)\$"
 		case "$subject" in
-			*"$own_alternative") subject=${subject%"$own_alternative"}')$' ;;
+			"$prefix("*"$own_alternative") subject=${subject%"$own_alternative"}')$' ;;
 		esac
 	fi
 	case "$subject" in
@@ -806,6 +807,10 @@ run_manual_subject_control 'own release placed first' \
 	"${control_prefix}(ascoachingogvaner${control_own_tail}|${control_shared_pair})\$" reject
 run_manual_subject_control 'own release outside the group' \
 	"${control_prefix}(${control_shared_pair})|ascoachingogvaner${control_own_tail}\$" reject
+run_manual_subject_control 'own release inside the legacy revision group' \
+	"${control_prefix}${control_legacy}(${control_a}|${control_b}|ascoachingogvaner${control_own_tail})\$" reject
+run_manual_subject_control 'own release inside the maintained revision group' \
+	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}(${control_c}|${control_d}|ascoachingogvaner${control_own_tail}))\$" reject
 
 # Exercise the actual caller and KRO consumer together. A well-formed signer
 # expression still fails if it does not accept the caller's full identity.
