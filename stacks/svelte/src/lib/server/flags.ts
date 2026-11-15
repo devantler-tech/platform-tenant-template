@@ -2,7 +2,12 @@
 // flag, default-off, are tested in both states, and are switched on only after
 // validation. The in-memory provider needs no backend; swap it for flagd or a
 // hosted provider without touching call sites.
-import { InMemoryProvider, OpenFeature, type Client } from '@openfeature/server-sdk';
+import {
+	InMemoryProvider,
+	OpenFeature,
+	type Client,
+	type Provider
+} from '@openfeature/server-sdk';
 
 /** Names this application's feature-flag client. */
 export const flagDomain = 'app';
@@ -29,7 +34,7 @@ export function inMemoryProvider(flags: Record<string, boolean>): InMemoryProvid
 /** Registers the provider under `domain` and returns a client bound to it. */
 export async function flagClient(
 	domain: string = flagDomain,
-	provider: InMemoryProvider = inMemoryProvider({})
+	provider: Provider = inMemoryProvider({})
 ): Promise<Client> {
 	await OpenFeature.setProviderAndWait(domain, provider);
 	return OpenFeature.getClient(domain);

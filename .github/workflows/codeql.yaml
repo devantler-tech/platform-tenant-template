@@ -65,7 +65,9 @@ jobs:
           if has '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' '*.svelte' '*.vue'; then add javascript-typescript none; fi
           if has '*.cs' '*.csproj'; then add csharp none; fi
           if has '*.py'; then add python none; fi
-          if has '*.java' '*.kt'; then add java-kotlin none; fi
+          # Kotlin cannot be analysed without a build; Java alone can.
+          if has '*.kt'; then add java-kotlin autobuild
+          elif has '*.java'; then add java-kotlin none; fi
           if has '*.rb'; then add ruby none; fi
           if has '*.rs'; then add rust none; fi
           echo "matrix=[${entries}]" >>"${GITHUB_OUTPUT}"
