@@ -2,7 +2,7 @@
 #
 # It is deliberately self-consistent with the deploy/ scaffold so a freshly
 # created tenant deploys cleanly before you swap in your real app: it runs as a
-# non-root user and serves HTTP on port 3000, matching deploy/base/deployment.yaml's
+# non-root user and serves HTTP on port 3000, matching deploy/deployment.yaml's
 # securityContext (runAsNonRoot, readOnlyRootFilesystem) and its liveness/readiness
 # probes. Replace it with your stack's (typically multi-stage) build.
 FROM python:3.16.0a1-alpine

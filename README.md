@@ -31,7 +31,7 @@ flowchart LR
 | `dotnet` | An ASP.NET Core minimal API on .NET 11 with OpenFeature, xUnit v3 tests and warnings-as-errors analyzers, built and tested in CI |
 | `svelte` | A SvelteKit 3 and Svelte 5 app on Node 26 with `adapter-node`, OpenFeature, Vitest, svelte-check and ESLint |
 | `none` | A placeholder CI job for a stack you bring yourself; with `--tenancy` also a placeholder Dockerfile, otherwise you add your own build files |
-| `--tenancy` | `deploy/` Kustomize manifests, a signed image and manifests release on every `v*` tag, and CI that builds the image and renders `deploy/` and `deploy/dev` before merge |
+| `--tenancy` | `deploy/` Kustomize manifests, a signed image and manifests release on every `v*` tag, and CI that builds the image and renders `deploy/` before merge |
 
 Every stack serves a placeholder page at `GET /` on port 3000, which is where the tenant's probes
 look, so a new tenant deploys before you write any code.
@@ -113,9 +113,9 @@ Default PR CI always builds the tenant image and renders `deploy/` before merge,
 secrets or write authority. Keep the `delivery-inputs` job and its entry in
 `ci-required-checks` when you change the stack job. This catches the same image and manifest
 failures in the pull request that introduced them instead of during release or reconciliation.
-Keep the `publish-pin-approved` job and its entry too: it verifies the direct publisher’s
-minimal signing job and retains the approval checks while an existing tenant uses the shared
-reusable publisher. An application scaffolded without
+Keep the `publish-pin-approved` job and its entry too: it holds back a dependency update that
+moves the publishing workflow to a revision the platform has not yet approved for your tenant,
+so the release it would cut does not fail to deploy. An application scaffolded without
 `--tenancy` has neither job.
 
 After authorized App setup and platform registration, eligible Conventional Commits can produce

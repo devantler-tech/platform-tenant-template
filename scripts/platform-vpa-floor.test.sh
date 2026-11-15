@@ -32,7 +32,7 @@ validate_vpa_floor() (
 	platform_root=$1
 	scaffold_root=$2
 	platform_policy=$platform_root/k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-deployment.yaml
-	deployment=$scaffold_root/deploy/base/deployment.yaml
+	deployment=$scaffold_root/deploy/deployment.yaml
 
 	[ -f "$platform_policy" ] || fail "Platform auto-vpa policy is missing: $platform_policy"
 	[ -f "$deployment" ] || fail "scaffold Deployment is missing: $deployment"
@@ -103,7 +103,7 @@ VALUES
 	scaffold_request_m=$(millicores "$scaffold_requests")
 
 	[ "$scaffold_request_m" -ge "$platform_floor_m" ] ||
-		fail "scaffold CPU request ${scaffold_requests} is below Platform VPA floor ${platform_floors}; raise deploy/base/deployment.yaml"
+		fail "scaffold CPU request ${scaffold_requests} is below Platform VPA floor ${platform_floors}; raise deploy/deployment.yaml"
 
 	printf 'Platform VPA floor contract: request=%s floor=%s\n' "$scaffold_requests" "$platform_floors"
 )
@@ -121,9 +121,9 @@ mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
 
 platform_policy_rel=k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-deployment.yaml
-mkdir -p "$mutation_dir/platform/$(dirname -- "$platform_policy_rel")" "$mutation_dir/scaffold/deploy/base"
+mkdir -p "$mutation_dir/platform/$(dirname -- "$platform_policy_rel")" "$mutation_dir/scaffold/deploy"
 cp "$platform_root/$platform_policy_rel" "$mutation_dir/platform/$platform_policy_rel"
-cp "$repo_root/deploy/base/deployment.yaml" "$mutation_dir/scaffold/deploy/base/deployment.yaml"
+cp "$repo_root/deploy/deployment.yaml" "$mutation_dir/scaffold/deploy/deployment.yaml"
 
 # Rebuild pristine fixtures, apply one mutation, and require validation to reject it.
 run_mutation() {
@@ -132,15 +132,15 @@ run_mutation() {
 	scaffold_mutation=$3
 
 	cp "$platform_root/$platform_policy_rel" "$mutation_dir/platform/$platform_policy_rel"
-	cp "$repo_root/deploy/base/deployment.yaml" "$mutation_dir/scaffold/deploy/base/deployment.yaml"
+	cp "$repo_root/deploy/deployment.yaml" "$mutation_dir/scaffold/deploy/deployment.yaml"
 
 	if [ -n "$platform_mutation" ]; then
 		yq eval "$platform_mutation" "$mutation_dir/platform/$platform_policy_rel" > "$mutation_dir/platform-mutant.yaml"
 		mv "$mutation_dir/platform-mutant.yaml" "$mutation_dir/platform/$platform_policy_rel"
 	fi
 	if [ -n "$scaffold_mutation" ]; then
-		yq eval "$scaffold_mutation" "$mutation_dir/scaffold/deploy/base/deployment.yaml" > "$mutation_dir/scaffold-mutant.yaml"
-		mv "$mutation_dir/scaffold-mutant.yaml" "$mutation_dir/scaffold/deploy/base/deployment.yaml"
+		yq eval "$scaffold_mutation" "$mutation_dir/scaffold/deploy/deployment.yaml" > "$mutation_dir/scaffold-mutant.yaml"
+		mv "$mutation_dir/scaffold-mutant.yaml" "$mutation_dir/scaffold/deploy/deployment.yaml"
 	fi
 
 	if (validate_vpa_floor "$mutation_dir/platform" "$mutation_dir/scaffold") >/dev/null 2>&1; then

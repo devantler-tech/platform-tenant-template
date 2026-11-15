@@ -41,8 +41,7 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Platform Gateway → app HTTP (via ../prod/httproute.yaml in production;
-    # in dev, through the platform's sign-on ingress).
+    # Platform Gateway → app HTTP (the Gateway routes here via httproute.yaml).
     # Match the container port in deployment.yaml if you change it from 3000.
     - fromEntities:
         - ingress

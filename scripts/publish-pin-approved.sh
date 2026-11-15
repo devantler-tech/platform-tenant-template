@@ -32,6 +32,12 @@ fail() {
 [ "$#" -eq 2 ] || fail 'usage: publish-pin-approved.sh <base-cd.yaml> <head-cd.yaml>'
 
 # One complete publisher identity, not just a SHA that could belong to another repository.
+publish_manifest_choice=$(cat <<'EXPRESSION'
+${{ hashFiles('deploy/base/deployment.yaml') != '' && 'base/deployment.yaml' || 'deployment.yaml' }}
+EXPRESSION
+)
+export publish_manifest_choice
+
 publish_identity() {
 	[ -f "$1" ] || fail "no cd.yaml at $1"
 	yq eval-all -e '[.] | length == 1' "$1" >/dev/null ||
@@ -72,7 +78,9 @@ publish_identity() {
 			and (.jobs.publish.steps[2].uses | test("^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$"))
 			and (.jobs.publish.steps[2].with | keys | sort | join(",")) == "app-manifest,app-name"
 			and .jobs.publish.steps[2].with."app-name" == "${{ github.event.repository.name }}"
-			and .jobs.publish.steps[2].with."app-manifest" == "base/deployment.yaml"
+			and (.jobs.publish.steps[2].with."app-manifest" == "base/deployment.yaml"
+				or .jobs.publish.steps[2].with."app-manifest" == "deployment.yaml"
+				or .jobs.publish.steps[2].with."app-manifest" == strenv(publish_manifest_choice))
 		' "$1" >/dev/null || fail "$1 does not retain the minimal own-release signing contract"
 		yq eval -r '.jobs.publish.steps[2].uses' "$1"
 		return

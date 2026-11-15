@@ -100,9 +100,9 @@ validate_pins "$cd_workflow" "$release_workflow" "$template_sync_workflow"
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
 mutations_run=0
-# Start each negative control with independent copies of the real callers.
+# Start each control with the direct-caller fixture and real release/sync callers.
 reset_mutation() {
- cp "$cd_workflow" "$mutation_dir/cd.yaml"
+ cp "$script_dir/fixtures/own-publisher.yaml" "$mutation_dir/cd.yaml"
  cp "$release_workflow" "$mutation_dir/release.yaml"
  cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
 }
@@ -128,6 +128,7 @@ single_mutation() {
 # Existing tenants can receive the portable check before changing their caller.
 # Verify that the retained legacy arm still checks a real, tagged publisher.
 reset_mutation
+validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" "$mutation_dir/template-sync.yaml"
 yq eval '
  del(.jobs.publish.steps, .jobs.publish."runs-on", .jobs.publish."timeout-minutes", .jobs.publish.concurrency)
  | .jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"

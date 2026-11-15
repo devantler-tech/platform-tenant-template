@@ -151,7 +151,6 @@ generic_default_subject() (
 	rgd=$2
 	publisher_revision=${3:-}
 	conditional_subject=0
-	own_subject=''
 	# shellcheck disable=SC2016
 	prefix='${schema.spec.source.publisherRevision == "" ? '
 	# shellcheck disable=SC2016
@@ -177,7 +176,6 @@ generic_default_subject() (
 					# The literal after the name is exactly the own-release tail and
 					# the end of the group, so nothing can follow the tenant's tag.
 					[ "$own" = "$own_release_tail)\$" ] || exit 1
-					own_subject='^https://github\.com/devantler-tech/app'"$own_release_tail"'$'
 					group_prefix='^https://github\.com/devantler-tech/('
 					case "$shared" in "$group_prefix"*'|') ;; *) exit 1 ;; esac
 					shared=${shared#"$group_prefix"}
@@ -200,10 +198,6 @@ generic_default_subject() (
 		validate_revision_group "$publisher_revision" 1 || exit 1
 		subject='^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@'"$publisher_revision"'$'
 	fi
-	if [ "${publisher_mode:-shared}" = own ]; then
-		[ -n "$own_subject" ] && [ -z "$publisher_revision" ] || exit 1
-		subject=$own_subject
-	fi
 	printf '%s\n' "$subject"
 )
 
@@ -213,16 +207,6 @@ validate_publish_workflow() {
 	[ -f "$workflow_file" ] || fail "tenant publish workflow is missing: $workflow_file"
 	yq eval-all -e '[.] | length == 1' "$workflow_file" >/dev/null ||
 		fail "tenant publish workflow must contain exactly one YAML document"
-	if yq eval -e '.jobs.publish | has("steps")' "$workflow_file" >/dev/null 2>&1; then
-		sh "$repo_root/scripts/publish-pin-approved.sh" "$workflow_file" "$workflow_file" >/dev/null ||
-			fail "tenant publish workflow no longer has the minimal own-release signing contract"
-		publisher_mode=own
-		# Instantiate the generic tenant rule with a valid example name. The
-		# parser binds that name's position in the actual CEL expression below.
-		publisher_identity='https://github.com/devantler-tech/app/.github/workflows/cd.yaml@refs/tags/v1.0.0'
-		return
-	fi
-	publisher_mode=shared
 
 	# The tag-only tenant job is the producer identity Platform's OCIRepository
 	# accepts. Keep its authority both minimal and immutable.
@@ -262,8 +246,8 @@ validate_openbao_authorization() (
 	for required_file in \
 		"$vault_config" \
 		"$rename_script" \
-		"$scaffold_root/deploy/prod/secretstore.yaml" \
-		"$scaffold_root/deploy/prod/externalsecret.yaml"
+		"$scaffold_root/deploy/secretstore.yaml" \
+		"$scaffold_root/deploy/externalsecret.yaml"
 	do
 		[ -f "$required_file" ] || fail "OpenBao authorization source is missing: $required_file"
 	done
@@ -275,8 +259,8 @@ validate_openbao_authorization() (
 	cp "$rename_script" "$renamed_scaffold/scripts/rename-placeholders.sh"
 	sh "$renamed_scaffold/scripts/rename-placeholders.sh" "$tenant_name" >/dev/null
 
-	secret_store=$renamed_scaffold/deploy/prod/secretstore.yaml
-	external_secret=$renamed_scaffold/deploy/prod/externalsecret.yaml
+	secret_store=$renamed_scaffold/deploy/secretstore.yaml
+	external_secret=$renamed_scaffold/deploy/externalsecret.yaml
 	expected_remote_key=apps/$tenant_name/config
 	export tenant_name expected_remote_key
 
@@ -845,17 +829,8 @@ run_producer_control() {
 		'(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) = strenv(SUBJECT_CONTROL)' \
 		"$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
 	mv "$mutation_dir/producer-control.yaml" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
-	# Keep the existing shared-publisher compatibility and refusal controls
-	# independent of the starter's new direct-action execution frame.
-	if [ "${7:-shared}" = own ]; then
-		cp "$publish_workflow" "$mutation_dir/producer-cd.yaml"
-	else
-		CALLER_CONTROL=$control_caller yq eval '
-			del(.jobs.publish.steps, .jobs.publish."runs-on", .jobs.publish."timeout-minutes", .jobs.publish.concurrency)
-			| .jobs.publish.uses = strenv(CALLER_CONTROL)
-			| .jobs.publish.with = {"app-name": strenv(expected_publish_app_name), "enable-caller-pin": true}
-		' "$publish_workflow" > "$mutation_dir/producer-cd.yaml"
-	fi
+	CALLER_CONTROL=$control_caller yq eval '.jobs.publish.uses = strenv(CALLER_CONTROL)' \
+		"$publish_workflow" > "$mutation_dir/producer-cd.yaml"
 	case "${5:-}" in
 		static-ref)
 			yq eval '(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"semver": ">=1.0.0"}' \
@@ -897,15 +872,6 @@ control_legacy_caller=devantler-tech/actions/.github/workflows/publish-app.yaml@
 control_maintained_caller=devantler-tech/.github/.github/workflows/publish-app.yaml@$control_b
 control_generic_legacy="${control_prefix}${control_legacy}[0-9a-f]{40}\$"
 control_generic_transition="${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}${control_b})\$"
-control_current_subject=$(yq eval -r '.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject' \
-	"$baseline/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml")
-run_producer_control 'direct publisher matches the current own-release rule' \
-	"$control_current_subject" '' accept '' '' own
-run_producer_control 'shared-only rule does not authorize a direct publisher' \
-	"$control_generic_transition" '' reject '' '' own
-control_wrong_name=$(printf '%s\n' "$control_current_subject" | sed 's/schema\.spec\.name\.replace/schema.spec.other.replace/g')
-run_producer_control 'own-release name must come from the tenant name' \
-	"$control_wrong_name" '' reject '' '' own
 run_producer_control 'static OCI ref retains conditional reconciliation safeguards' \
 	"$control_generic_transition" "$control_maintained_caller" accept static-ref
 # Literal CEL serialization from Platform's TenantSource publisher contract.
@@ -1077,11 +1043,11 @@ run_vault_duplicate "tenant policy declared twice" \
 run_vault_duplicate "tenant Kubernetes-auth role declared twice" \
 	'bao write auth/kubernetes/role/ascoachingogvaner' 'ttl=1h'
 run_vault_prefixed_role_control "another tenant role starts with this tenant name"
-run_scaffold_mutation "scaffold OpenBao role changed" deploy/prod/secretstore.yaml \
+run_scaffold_mutation "scaffold OpenBao role changed" deploy/secretstore.yaml \
 	'.spec.provider.vault.auth.kubernetes.role = "another-tenant"'
-run_scaffold_mutation "scaffold OpenBao ServiceAccount changed" deploy/prod/secretstore.yaml \
+run_scaffold_mutation "scaffold OpenBao ServiceAccount changed" deploy/secretstore.yaml \
 	'.spec.provider.vault.auth.kubernetes.serviceAccountRef.name = "another-tenant"'
-run_scaffold_mutation "scaffold OpenBao path crossed into another tenant" deploy/prod/externalsecret.yaml \
+run_scaffold_mutation "scaffold OpenBao path crossed into another tenant" deploy/externalsecret.yaml \
 	'.spec.data[0].remoteRef.key = "apps/another-tenant/config"'
 run_mutation "KRO managed-by label removed" "$rgd_path" \
 	'del(.spec.resources[] | select(.id == "tenantNamespace").template.metadata.labels."app.kubernetes.io/managed-by")'
@@ -1220,7 +1186,7 @@ run_publish_mutation "producer workflow unpinned" \
 run_publish_mutation "producer workflow changed" \
 	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/other.yaml@47f0d9b632581a613963a2d25c243713f24c32a0"'
 run_publish_mutation "application identity hard-coded" \
-	'.jobs.publish.steps[2].with."app-name" = "app"'
+	'.jobs.publish.with."app-name" = "app"'
 run_publish_mutation "publisher authority widened" \
 	'.jobs.publish.permissions.issues = "write"'
 run_publish_mutation "branch publication enabled" \
@@ -1232,9 +1198,9 @@ run_publish_mutation "second package publisher added" \
 # happily accepting an explicit false — which is the mutation that silently
 # restores the unenforced default. Deleting the pair is what would let the
 # caller-pin requirement decay back to opt-in without a failing test.
-run_publish_mutation "credential-free checkout removed" \
-	'del(.jobs.publish.steps[1].with."persist-credentials")'
-run_publish_mutation "credential-free checkout disabled" \
-	'.jobs.publish.steps[1].with."persist-credentials" = true'
+run_publish_mutation "caller SHA-pin enforcement removed" \
+	'del(.jobs.publish.with."enable-caller-pin")'
+run_publish_mutation "caller SHA-pin enforcement disabled" \
+	'.jobs.publish.with."enable-caller-pin" = false'
 
 echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations + ${subject_controls_run} subject controls + ${producer_controls_run} producer controls)"

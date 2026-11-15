@@ -46,6 +46,8 @@ tenant_ignored() {
 
 [ -f "$portable_contract" ] ||
 	fail 'the portable workflow-caller pin contract is missing'
+[ -f "$repo_root/scripts/fixtures/own-publisher.yaml" ] ||
+	fail 'the direct publisher compatibility fixture is missing'
 grep -Fqx 'scripts/workflow-caller-contract.test.sh' "$template_sync_ignore" ||
 	fail 'the scaffold-only workflow-caller contract must stay tenant-ignored'
 if grep -Fqx 'scripts/workflow-caller-pin-contract.test.sh' "$template_sync_ignore"; then
@@ -77,25 +79,20 @@ validate_contract() {
 	reference_file=$5
 	ignore_file=$6
 	dependabot_file=$7
+	if tenant_ignored "$ignore_file" scripts/fixtures/own-publisher.yaml; then
+		fail 'the portable caller fixture must reach tenants through template sync'
+	fi
 
-	yq eval -e '.jobs.publish.steps[2].uses | test("^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$")' \
+	yq eval -e '.jobs.publish.uses | test("^devantler-tech/[.]github/[.]github/workflows/publish-app[.]yaml@[0-9a-f]{40}$")' \
 		"$cd_file" >/dev/null ||
 		fail 'the starter must ship the maintained application publisher'
 
 	sh "$portable_contract" --validate "$cd_file" "$release_file" "$template_sync_file" ||
 		fail 'the portable workflow-caller pin contract rejected the caller set'
 
-	yq eval -e '
-		(.jobs.publish | has("uses") | not)
-		and (.jobs.publish | has("with") | not)
-		and .jobs.publish.steps[1].with."persist-credentials" == false
-		and .jobs.publish.steps[2].id == "publish"
-		and (.jobs.publish.steps[2] | has("if") | not)
-		and (.jobs.publish.steps[2] | has("continue-on-error") | not)
-		and .jobs.publish.steps[2].with."app-manifest" == "base/deployment.yaml"
-	' \
+	yq eval -e '.jobs.publish.with."enable-caller-pin" == true' \
 		"$cd_file" >/dev/null ||
-		fail 'the publish caller must keep credential-free checkout and mandatory publication'
+		fail 'the publish caller must keep the producer-side ref guard enabled'
 
 	# Canonical release and sync callers move together within their own catalogue.
 	# The maintained publisher has an independent, explicitly approved version. Dependabot treats
@@ -267,11 +264,11 @@ run_mutation() {
 }
 
 run_mutation 'publish caller SHA pin removed' cd \
-	'.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/publish-app@main"'
+	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@main"'
 run_mutation 'legacy publisher restored' cd \
-	'.jobs.publish.steps[2].uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328"'
+	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328"'
 run_mutation 'publisher-side caller pin disabled' cd \
-	'.jobs.publish.steps[2].if = "false"'
+	'.jobs.publish.with."enable-caller-pin" = false'
 run_mutation 'release caller SHA pin removed' release \
 	'.jobs.release.uses = "devantler-tech/.github/.github/workflows/create-release.yaml@main"'
 run_mutation 'release issue isolation disabled' release \
@@ -288,6 +285,11 @@ run_mutation 'template-sync ignore-entry merge disabled' template-sync \
 	'.jobs."template-sync".with."merge-template-ignore-entries" = false'
 run_mutation 'template-sync ignore-entry merge removed' template-sync \
 	'del(.jobs."template-sync".with."merge-template-ignore-entries")'
+# The sed append address is literal; it must not expand as a shell variable.
+# shellcheck disable=SC2016
+run_mutation 'portable caller fixture excluded from template sync' ignore \
+	'$a\
+scripts/fixtures/own-publisher.yaml'
 run_mutation 'required scaffold invocation removed' validation \
 	'del(.jobs."validate-scaffold".steps[] | select(.run == "sh scripts/workflow-caller-contract.test.sh"))'
 run_mutation 'reference ownership table marker removed' reference \
@@ -352,25 +354,20 @@ run_fleet_mutation() {
 	cp "$dependabot_config" "$mutation_dir/dependabot.yml"
 
 	for pair in \
-		"cd.yaml|.jobs.publish.steps[2].uses|publish-app" \
+		"cd.yaml|.jobs.publish.uses|publish-app" \
 		"release.yaml|.jobs.release.uses|create-release" \
 		"template-sync.yaml|.jobs.\"template-sync\".uses|template-sync"; do
 		mutant_file=${pair%%|*}
 		rest=${pair#*|}
 		mutant_path=${rest%%|*}
 		mutant_workflow=${rest##*|}
-		if [ "$mutant_workflow" = publish-app ]; then
-			mutant_workflow=actions/publish-app
-		else
-			mutant_workflow=.github/workflows/$mutant_workflow.yaml
-		fi
 		if [ "$family" = publish ]; then
-			[ "$mutant_workflow" = actions/publish-app ] || continue
+			[ "$mutant_workflow" = publish-app ] || continue
 		else
-			[ "$mutant_workflow" != actions/publish-app ] || continue
+			[ "$mutant_workflow" != publish-app ] || continue
 		fi
 		yq eval \
-			"${mutant_path} = \"devantler-tech/.github/${mutant_workflow}@${ref}\" |
+			"${mutant_path} = \"devantler-tech/.github/.github/workflows/${mutant_workflow}.yaml@${ref}\" |
 			 ${mutant_path} line_comment = \"${version}\"" \
 			"$mutation_dir/$mutant_file" > "$mutation_dir/mutant.yaml"
 		mv "$mutation_dir/mutant.yaml" "$mutation_dir/$mutant_file"
@@ -391,7 +388,7 @@ run_fleet_mutation() {
 }
 
 run_mutation 'publish caller rolled back while the others stay current' cd \
-	'.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/publish-app@77cfa9cfc5514ebe1429f64e681afd181cf4515d"'
+	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@77cfa9cfc5514ebe1429f64e681afd181cf4515d"'
 run_mutation 'release caller rolled back while the others stay current' release \
 	'.jobs.release.uses = "devantler-tech/.github/.github/workflows/create-release.yaml@4b00bd6698af033dc472b39a7e609173fe38dfb1"'
 run_fleet_mutation 'publisher below reviewed floor' \
@@ -399,7 +396,7 @@ run_fleet_mutation 'publisher below reviewed floor' \
 run_fleet_mutation 'publisher at historical maintained v6.1.0' \
 	'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'v6.1.0' publish 'older than the reviewed floor'
 run_fleet_mutation 'publisher version comment stripped' \
-	'3cab796adef97dcde0c55724866a0b19397aba39' '' publish 'version comment of the form'
+	'0c7b6c3509b73adbc7537e030935bb01987e625b' '' publish 'version comment of the form'
 run_fleet_mutation 'publisher version comment unparseable' \
 	'0c7b6c3509b73adbc7537e030935bb01987e625b' 'vLATEST.x.y' publish 'version comment of the form'
 run_fleet_mutation 'publisher version comment carrying a fourth component' \

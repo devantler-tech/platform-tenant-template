@@ -114,9 +114,9 @@ check_tenancy() {
 	# shellcheck disable=SC2016
 	grep -Fq 'build the tenant image and render `deploy/` before merge' "$dir/AGENTS.md" ||
 		fail "$label: AGENTS.md lost the delivery-input invariant"
-	grep -q "name: demo-app$" "$dir/deploy/base/deployment.yaml" ||
+	grep -q "name: demo-app$" "$dir/deploy/deployment.yaml" ||
 		fail "$label: deploy/ was not renamed to the application"
-	grep -q 'REPLACE_ME' "$dir/deploy/base/deployment.yaml" &&
+	grep -q 'REPLACE_ME' "$dir/deploy/deployment.yaml" &&
 		fail "$label: deploy/ still carries a placeholder image"
 	# The scaffolded gate must satisfy the same contract as the template's own.
 	sh "$repo_root/scripts/tenant-ci-contract.test.sh" --validate \
@@ -229,7 +229,7 @@ dir=$work/named/checkout
 copy_template "$dir"
 sh "$dir/scripts/scaffold.sh" go --tenancy widget >/dev/null
 grep -qx 'module github.com/devantler-tech/widget' "$dir/go.mod" || fail "explicit name: go.mod not renamed"
-grep -q 'name: widget$' "$dir/deploy/base/deployment.yaml" || fail "explicit name: deploy/ not renamed"
+grep -q 'name: widget$' "$dir/deploy/deployment.yaml" || fail "explicit name: deploy/ not renamed"
 echo "ok: explicit name"
 
 # The name `example` already matches the .NET placeholder project, so nothing moves.

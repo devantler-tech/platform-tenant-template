@@ -31,7 +31,7 @@ Kustomize app (a platform **tenant**).
 <!-- stack:end -->
 
 <!-- tenancy:begin -->
-Keep CI's delivery-input gate: build the tenant image and render `deploy/` before merge; render `deploy/dev` too,
+Keep CI's delivery-input gate: build the tenant image and render `deploy/` before merge,
 then include every job in `ci-required-checks`.
 <!-- tenancy:end -->
 
@@ -40,24 +40,9 @@ then include every job in `ci-required-checks`.
 - `.github/workflows/` — `ci.yaml` (PR gate) and `release.yaml` (semantic-release on
   `main`).
 <!-- tenancy:begin -->
-- `deploy/` — Kustomize manifests for the platform cluster, published as one
-  signed OCI artifact and split so production and dev share one copy of each
-  manifest:
-  - `deploy/kustomization.yaml` — the production entry the platform reconciles
-    at `path: .`. It includes only `prod`.
-  - `deploy/base/` — what both environments run: the Deployment (whose app
-    container receives the published image digest), Service, network policy and
-    an optional CNPG Cluster.
-  - `deploy/prod/` — `../base` plus what only production runs: the public
-    HTTPRoute, the PodDisruptionBudget, and — when the app needs secrets — the
-    namespaced `SecretStore` + `ExternalSecret` reading production paths in
-    OpenBao. Anything holding a production hostname, credential, database or
-    bucket goes here.
-  - `deploy/dev/` — `../base` changed only by kustomize patches (one replica).
-    Never copy a base manifest into it, and never add a route, PDB or production
-    secret path: the platform owns dev ingress behind sign-on and reconciles
-    dev at `path: ./dev` into a `<tenant>-dev` namespace
-    ([platform#6126](https://github.com/devantler-tech/platform/issues/6126)).
+- `deploy/` — Kustomize manifests for the platform cluster (Deployment, Service,
+  HTTPRoute, an optional CNPG Cluster, and — when the app needs secrets — a
+  namespaced `SecretStore` + `ExternalSecret` sourcing them from OpenBao).
 - `.github/workflows/cd.yaml` — publishes the signed image and manifests artifact on
   `v*` tags.
 <!-- tenancy:end -->
