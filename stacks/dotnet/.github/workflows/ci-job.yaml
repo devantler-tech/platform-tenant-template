@@ -22,7 +22,7 @@ jobs:
       # Sets up the SDK global.json pins, then builds and tests the solution.
       # Warnings are errors, so this also enforces the analyzers and code style.
       - name: 🧪 Build and test
-        uses: devantler-tech/.github/actions/run-dotnet-tests@a76d5df9371cf712a8f60307fde060825a34cf35 # v21.3.4
+        uses: devantler-tech/.github/actions/run-dotnet-tests@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
         with:
           # Public dependencies need no authenticated restore or coverage upload.
           github-token: ""

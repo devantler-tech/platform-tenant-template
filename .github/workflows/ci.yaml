@@ -121,7 +121,7 @@ jobs:
       # Every result in `needs` is consumed, so a job listed there can never be left out.
       - name: 📊 Require all CI checks to pass
         id: ci-checks
-        uses: devantler-tech/.github/actions/aggregate-job-checks@a76d5df9371cf712a8f60307fde060825a34cf35 # v21.3.4
+        uses: devantler-tech/.github/actions/aggregate-job-checks@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
         with:
           check-workflow-startup: "true"
           job-results: ${{ join(needs.*.result, ' ') }}
