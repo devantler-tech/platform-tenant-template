@@ -9,6 +9,7 @@ name: 🔍 CodeQL
 #   1. turn default setup off (Settings → Code security → CodeQL analysis), then
 #   2. set the repository variable CODEQL_SETUP to `advanced`.
 # The languages come from the repository's own files, so a new stack needs no edit here.
+# Fix its alerts in ordinary reviewed pull requests, never with Copilot Autofix.
 on:
   push:
     branches: [main]
