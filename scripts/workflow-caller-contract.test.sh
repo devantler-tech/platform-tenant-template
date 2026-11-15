@@ -290,17 +290,22 @@ run_mutation 'reference local validation marker removed' reference \
 	'/sh scripts\/workflow-caller-contract\.test\.sh/d'
 run_mutation 'actual ownership marker removed' ignore \
 	'/^scripts\/workflow-caller-contract\.test\.sh$/d'
+# The sed programs below are literal: `$a` appends a line, it is not a shell expansion.
+# shellcheck disable=SC2016
 run_mutation 'tenant-run publish-pin test tenant-ignored' ignore \
 	'$a\
 scripts/publish-pin-approved.test.sh'
+# shellcheck disable=SC2016
 run_mutation 'tenant-run publish-pin check tenant-ignored' ignore \
 	'$a\
 scripts/publish-pin-approved.sh'
 run_mutation 'reference ownership row for the publish-pin test removed' reference \
 	"/\`scripts\/publish-pin-approved\.test\.sh\`/d"
+# shellcheck disable=SC2016
 run_mutation 'publish-pin files tenant-ignored by a wildcard' ignore \
 	'$a\
 scripts/publish-pin-approved*'
+# shellcheck disable=SC2016
 run_mutation 'publish-pin row moved to the scaffold-time table' reference \
 	'/^| `scripts\/publish-pin-approved\.sh`/{
 h

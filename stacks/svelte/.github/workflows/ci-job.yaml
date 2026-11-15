@@ -1,0 +1,35 @@
+# The SvelteKit stack's CI job. scripts/scaffold.sh copies the `stack` job below
+# into .github/workflows/ci.yaml in place of the placeholder job. This file is
+# never a workflow of its own: it lives here so Dependabot keeps its pins current.
+name: SvelteKit stack job
+on: workflow_call
+permissions: {}
+jobs:
+  stack:
+    name: SvelteKit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout only; proposed code receives no credential
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ⚙️ Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+      - name: 📦 Install
+        run: npm ci
+      - name: 🧹 Lint
+        run: npm run lint
+      - name: 🔎 Type-check
+        run: npm run check
+      - name: 🧪 Test
+        run: npm test
+      - name: 🏗️ Build
+        run: npm run build

@@ -2,12 +2,15 @@
 root = true
 
 [*]
-indent_style = space
-indent_size = 2
 end_of_line = lf
 charset = utf-8
 trim_trailing_whitespace = true
 insert_final_newline = true
+
+# The .NET house style; other files keep the formatting their own linters check.
+[*.{cs,csproj,slnx,props,targets}]
+indent_style = space
+indent_size = 2
 max_line_length = 120
 
 [*.cs]

@@ -36,7 +36,7 @@ scripts/tenant-rbac.test.sh scripts/tenant-rbac-contract.test.sh
 scripts/platform-tenant-envelope.test.sh scripts/platform-tenant-envelope-contract.test.sh
 scripts/platform-network-floor.test.sh scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh scripts/platform-vpa-floor-contract.test.sh'
-tenant_only='deploy Dockerfile .github/workflows/cd.yaml scripts/publish-pin-approved.sh
+tenant_only='deploy Dockerfile renovate.json .github/workflows/cd.yaml scripts/publish-pin-approved.sh
 scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh'
 
 # ignored <ignore-file> <path> — the path, or its directory form, is a line of the ignore file.
@@ -46,7 +46,7 @@ ignored() {
 
 # markers_in <file> — print every scaffold marker left in a file.
 markers_in() {
-	grep -nE '(#|<!--) (stack|tenancy|template):(begin|end)| # (tenancy|template)$' "$1" || true
+	grep -nE '(#|<!--) (stack|tenancy|template|lint):(begin|end)| # (tenancy|template|lint)$' "$1" || true
 }
 
 # The marker check must see the markers the unscaffolded template carries.
@@ -82,6 +82,20 @@ check_common() {
 		fail "$label: CI - Required Checks does not aggregate exactly the other jobs"
 	yq eval -e '.jobs.stack' "$dir/.github/workflows/ci.yaml" >/dev/null ||
 		fail "$label: ci.yaml has no stack job"
+	for path in .coderabbit.yaml .github/mega-linter.base.yml .github/workflows/codeql.yaml \
+		.github/workflows/lint.yaml .github/codeql/codeql-config.yml; do
+		[ -f "$dir/$path" ] || fail "$label: shared $path is missing"
+	done
+	grep -qx 'EXTENDS: .github/mega-linter.base.yml' "$dir/.mega-linter.yml" ||
+		fail "$label: .mega-linter.yml does not extend the shared base"
+	# Go is linted by the shared Go validator; every other stack calls the shared lint job.
+	if [ "$stack" = go ]; then
+		yq eval -e '.jobs | has("lint") | not' "$dir/.github/workflows/ci.yaml" >/dev/null ||
+			fail "$label: a Go application lints twice"
+	else
+		yq eval -e '.jobs.lint.uses == "./.github/workflows/lint.yaml"' "$dir/.github/workflows/ci.yaml" >/dev/null ||
+			fail "$label: ci.yaml does not call the shared lint job"
+	fi
 	# shellcheck disable=SC2016
 	yq eval -e '(.updates | length) as $all | [.updates[] | select(.directory == "/" or (.directories // [] | join(",")) == "/")] | length == $all' \
 		"$dir/.github/dependabot.yml" >/dev/null ||
@@ -116,13 +130,15 @@ check_plain() {
 	for path in $tenant_only .dockerignore; do
 		[ ! -e "$dir/$path" ] || fail "$label: tenant $path was not removed"
 	done
-	for path in .github/workflows/cd.yaml scripts/publish-pin-approved.sh \
+	for path in .github/workflows/cd.yaml renovate.json scripts/publish-pin-approved.sh \
 		scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh; do
 		ignored "$dir/.templatesyncignore" "$path" ||
 			fail "$label: .templatesyncignore does not keep the removed $path out"
 	done
-	[ "$(yq eval '.jobs | keys | join(",")' "$dir/.github/workflows/ci.yaml")" = "stack,ci-required-checks" ] ||
-		fail "$label: ci.yaml should hold only the stack job and its aggregate"
+	expected=stack,lint,ci-required-checks
+	[ "$stack" != go ] || expected=stack,ci-required-checks
+	[ "$(yq eval '.jobs | keys | join(",")' "$dir/.github/workflows/ci.yaml")" = "$expected" ] ||
+		fail "$label: ci.yaml should hold only $expected"
 	yq eval -e '[.updates[] | select(."package-ecosystem" == "docker")] | length == 0' \
 		"$dir/.github/dependabot.yml" >/dev/null || fail "$label: Dependabot still updates a removed image"
 	grep -q 'deploy/' "$dir/AGENTS.md" && fail "$label: AGENTS.md still describes deploy/"
@@ -164,6 +180,23 @@ check_dotnet() {
 		"$dir/.github/dependabot.yml" >/dev/null || fail "$label: NuGet packages are not kept current"
 }
 
+check_svelte() {
+	dir=$1
+	for file in package.json package-lock.json; do
+		[ "$(jq -r .name "$dir/$file")" = demo-app ] || fail "$label: $file was not renamed"
+	done
+	[ "$(jq -r '.packages[""].name' "$dir/package-lock.json")" = demo-app ] ||
+		fail "$label: the lockfile's root package was not renamed"
+	grep -q "flagDomain = 'demo-app'" "$dir/src/lib/server/flags.ts" || fail "$label: the flag domain was not renamed"
+	grep -q '<title>demo-app</title>' "$dir/src/routes/+page.svelte" || fail "$label: the page title was not renamed"
+	grep -qx 'node_modules/' "$dir/.gitignore" || fail "$label: node_modules is not ignored"
+	yq eval -e '.jobs.stack.name == "SvelteKit"' "$dir/.github/workflows/ci.yaml" >/dev/null ||
+		fail "$label: ci.yaml does not run the SvelteKit job"
+	yq eval -e '[.updates[] | select(."package-ecosystem" == "npm")] | length == 1' \
+		"$dir/.github/dependabot.yml" >/dev/null || fail "$label: npm packages are not kept current"
+	grep -q '^- TypeScript, SvelteKit' "$dir/AGENTS.md" || fail "$label: AGENTS.md does not describe the SvelteKit stack"
+}
+
 check_none() {
 	dir=$1
 	[ "$(yq eval '.jobs.stack.name' "$dir/.github/workflows/ci.yaml")" = Stack ] ||
@@ -171,7 +204,7 @@ check_none() {
 	grep -q '<language / framework>' "$dir/AGENTS.md" || fail "$label: the stack placeholders were removed"
 }
 
-for stack in go dotnet none; do
+for stack in go dotnet svelte none; do
 	for mode in tenancy plain; do
 		label="$stack/$mode"
 		dir=$work/$stack-$mode/demo-app
@@ -261,4 +294,4 @@ fi
 grep -q 'already scaffolded' "$work/out" || fail "a second run was refused for the wrong reason"
 echo "ok: refuses a second run"
 
-echo "PASS: scaffold (6 combinations, explicit name and refusals)"
+echo "PASS: scaffold (8 combinations, explicit name and refusals)"

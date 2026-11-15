@@ -12,6 +12,7 @@ updates:
       - /
       - /stacks/go/.github/workflows # template
       - /stacks/dotnet/.github/workflows # template
+      - /stacks/svelte/.github/workflows # template
     schedule:
       interval: daily
     open-pull-requests-limit: 10
@@ -73,6 +74,7 @@ updates:
       - /
       - /stacks/go # template
       - /stacks/dotnet # template
+      - /stacks/svelte # template
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
@@ -103,6 +105,21 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: npm
+    directory: /stacks/svelte
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    groups:
+      npm:
+        patterns:
+          - "*"
     cooldown:
       default-days: 7
   # template:end

@@ -1,0 +1,123 @@
+name: 🔍 CodeQL
+
+# Advanced CodeQL setup for every application. The template owns this workflow and
+# template-sync keeps it current; tune what it analyses in your own
+# `.github/codeql/codeql-config.yml` (queries, paths, query filters).
+#
+# GitHub refuses advanced results while the repository's CodeQL default setup is on,
+# so this stays off until both switches are made, in this order:
+#   1. turn default setup off (Settings → Code security → CodeQL analysis), then
+#   2. set the repository variable CODEQL_SETUP to `advanced`.
+# The languages come from the repository's own files, so a new stack needs no edit here.
+# Fix its alerts in ordinary reviewed pull requests, never with Copilot Autofix.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "27 5 * * 1" # weekly, Monday 05:27 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  languages:
+    name: Detect languages
+    if: vars.CODEQL_SETUP == 'advanced'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout only
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      config: ${{ steps.detect.outputs.config }}
+      go-mod: ${{ steps.detect.outputs.go-mod }}
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Each language CodeQL can analyse is included when a tracked file of its kind
+      # exists; GitHub Actions workflows are always analysed.
+      - name: 🧭 Detect
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          entries='{"language":"actions","build-mode":"none"}'
+          add() { entries="${entries},{\"language\":\"$1\",\"build-mode\":\"$2\"}"; }
+          has() { [ -n "$(git ls-files -- "$@" | head -n 1)" ]; }
+          if has 'go.mod' '**/go.mod'; then
+            add go autobuild
+            # Set up Go from the root module, or else the first one found below it.
+            go_mod=go.mod
+            if ! has 'go.mod'; then go_mod="$(git ls-files -- '**/go.mod' | head -n 1)"; fi
+            echo "go-mod=${go_mod}" >>"${GITHUB_OUTPUT}"
+          fi
+          if has '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' '*.svelte' '*.vue'; then add javascript-typescript none; fi
+          if has '*.cs' '*.csproj'; then add csharp none; fi
+          if has '*.py'; then add python none; fi
+          # Kotlin cannot be analysed without a build; Java alone can.
+          if has '*.kt'; then add java-kotlin autobuild
+          elif has '*.java'; then add java-kotlin none; fi
+          if has '*.rb'; then add ruby none; fi
+          if has '*.rs'; then add rust none; fi
+          echo "matrix=[${entries}]" >>"${GITHUB_OUTPUT}"
+          # An application that has not added its own configuration yet gets the
+          # security-extended suite instead.
+          if [ -f .github/codeql/codeql-config.yml ]; then
+            echo "config=./.github/codeql/codeql-config.yml" >>"${GITHUB_OUTPUT}"
+          fi
+          echo "CodeQL languages: [${entries}]"
+
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    needs: [languages]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # checkout
+      actions: read # workflow metadata for the analysis
+      security-events: write # upload the results to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.languages.outputs.matrix) }}
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Autobuild compiles each Go module it finds, with the toolchain go.mod asks for.
+      - name: ⚙️ Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ${{ needs.languages.outputs.go-mod }}
+          cache: false
+      - name: 🔍 Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ${{ needs.languages.outputs.config }}
+          queries: ${{ needs.languages.outputs.config == '' && 'security-extended' || '' }}
+      - name: 🏗️ Autobuild
+        if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+      - name: 🔬 Analyze
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}

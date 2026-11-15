@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stack: [go, dotnet, none]
+        stack: [go, dotnet, svelte, none]
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
@@ -46,6 +46,20 @@ jobs:
           mkdir -p "${APP}"
           git archive HEAD | tar -x -C "${APP}"
           sh "${APP}/scripts/scaffold.sh" "${STACK}" --tenancy demo-app
+          # A repository, as the application would be: MegaLinter reads .gitignore through git.
+          git -C "${APP}" init -q
+          git -C "${APP}" add -A
+
+      # The shared lint job every non-Go application runs, on the fresh scaffold. The
+      # runner temp directory is mounted at /github/runner_temp in the linter container.
+      - name: 🧹 Lint the scaffold
+        if: matrix.stack != 'go'
+        uses: oxsecurity/megalinter/flavors/cupcake@f2fe8c1cba37091848df3e524066c8c23ef353ed # v10.2.0
+        env:
+          DEFAULT_WORKSPACE: /github/runner_temp/demo-app
+          VALIDATE_ALL_CODEBASE: true
+          APPLY_FIXES: none
+          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality
 
       - name: ⚙️ Set up Go
         if: matrix.stack == 'go'
@@ -72,6 +86,22 @@ jobs:
         with:
           working-directory: ${{ env.APP }}
           github-token: ""
+
+      - name: ⚙️ Set up Node
+        if: matrix.stack == 'svelte'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ${{ env.APP }}/.node-version
+      - name: 🧪 Lint, check, test and build SvelteKit
+        if: matrix.stack == 'svelte'
+        working-directory: ${{ env.APP }}
+        run: |
+          set -eu
+          npm ci
+          npm run lint
+          npm run check
+          npm test
+          npm run build
 
       - name: 🧱 Render manifests
         working-directory: ${{ env.APP }}

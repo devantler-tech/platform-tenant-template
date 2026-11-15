@@ -1,0 +1,63 @@
+# Shared MegaLinter settings for every application made from application-template.
+# The template owns this file and template-sync keeps it current. Your own settings
+# go in .mega-linter.yml, which extends this file and wins wherever they differ.
+#
+# MegaLinter checks what every repository shares: workflows, shell scripts,
+# Dockerfiles, Markdown, YAML and JSON, Kubernetes manifests, and leaked secrets.
+# Each stack's own CI lints its language (golangci-lint, ESLint and svelte-check,
+# the .NET analyzers), so MegaLinter does not lint those again.
+FLAVOR_SUGGESTIONS: false
+IGNORE_GITIGNORED_FILES: true
+SHOW_ELAPSED_TIME: true
+# Linter configuration files (.markdownlint.json, .yamllint.yml, ...) live at the root.
+LINTER_RULES_PATH: .
+# Generated lockfiles are not hand-written and are not linted.
+FILTER_REGEX_EXCLUDE: (package-lock\.json|go\.sum)
+EXCLUDED_DIRECTORIES:
+  - .git
+  - megalinter-reports
+  - node_modules
+  - .svelte-kit
+  - build
+  - bin
+  - obj
+DISABLE:
+  # Languages the stack's CI owns.
+  - GO
+  - JAVASCRIPT
+  - TYPESCRIPT
+  - TSX
+  - JSX
+  # Spelling and copy-paste detection are opt-in: add them back in .mega-linter.yml.
+  - COPYPASTE
+  - SPELL
+DISABLE_LINTERS:
+  # The organization's required zizmor and dependency-review workflows cover these.
+  - ACTION_ZIZMOR
+  - REPOSITORY_GRYPE
+  - REPOSITORY_OSV_SCANNER
+  # Scripts run through `sh`, so they need no executable bit; their formatting is the
+  # owner's choice, and shellcheck still checks that they are correct.
+  - BASH_EXEC
+  - BASH_SHFMT
+  # Reformats tables only; markdownlint checks the Markdown itself.
+  - MARKDOWN_MARKDOWN_TABLE_FORMATTER
+  # deploy/ follows the platform's conventions (namespace set at reconcile time, UID 1000,
+  # no CPU limit, the image digest pinned at release), which the platform's own admission
+  # policies enforce. These generic policy scanners contradict them on every manifest.
+  - REPOSITORY_CHECKOV
+  - KUBERNETES_KUBESCAPE
+  # A Jinja/Django template linter; plain HTML is checked by htmlhint.
+  - HTML_DJLINT
+# Kubernetes manifests use custom resources (CloudNativePG, External Secrets, Gateway
+# API) whose schemas are not bundled; core kinds are still checked.
+KUBERNETES_KUBECONFORM_ARGUMENTS: -ignore-missing-schemas
+# Block on high and critical findings only.
+REPOSITORY_TRIVY_ARGUMENTS:
+  - --severity
+  - HIGH,CRITICAL
+# SvelteKit's page shell holds %sveltekit.*% placeholders, not finished HTML.
+HTML_FILTER_REGEX_EXCLUDE: (src/app\.html)
+# CodeQL configuration has no published JSON schema, and Kubernetes manifests are
+# validated by kubeconform (v8r would match them to unrelated schemas by file name).
+YAML_V8R_FILTER_REGEX_EXCLUDE: (\.github/codeql/|deploy/)
