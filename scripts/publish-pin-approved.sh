@@ -46,9 +46,11 @@ publish_identity() {
 		# A direct action signs as this repository, independently of the action's
 		# revision. Retain a minimal, tag-only, credential-free execution frame;
 		# the required caller-pin check binds its SHA to the catalogue release.
+		# Workflow-level env and defaults can also change the action's execution.
 		# shellcheck disable=SC2016
 		yq eval -e '
-			(.permissions | length) == 0
+			(keys - ["name", "on", "permissions", "jobs"] | length) == 0
+			and (.permissions | length) == 0
 			and (.["on"] | keys | join(",")) == "push"
 			and (.["on"].push | keys | join(",")) == "tags"
 			and (.["on"].push.tags | length) == 1

@@ -189,6 +189,8 @@ for manifest in deployment.yaml base/deployment.yaml; do
 	fi
 done
 for mutation in \
+	'.env.BASH_ENV = "publisher-hook.sh"' \
+	'.defaults.run.shell = "bash -e {0}"' \
 	'.jobs.publish.steps[2].uses = "other-owner/repo/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
 	'.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/publish-app@main"' \
 	'.jobs.publish.steps[1].with."persist-credentials" = true' \
