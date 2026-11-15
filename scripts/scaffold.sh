@@ -194,11 +194,14 @@ else
 			internal/featureflag/featureflag.go internal/featureflag/featureflag_test.go
 		;;
 	dotnet)
-		mv src/Example "src/$project"
-		mv "src/$project/Example.csproj" "src/$project/$project.csproj"
-		mv tests/Example.Tests "tests/$project.Tests"
-		mv "tests/$project.Tests/Example.Tests.csproj" "tests/$project.Tests/$project.Tests.csproj"
-		mv Example.slnx "$project.slnx"
+		# An application named `example` already has the placeholder's project name.
+		if [ "$project" != Example ]; then
+			mv src/Example "src/$project"
+			mv "src/$project/Example.csproj" "src/$project/$project.csproj"
+			mv tests/Example.Tests "tests/$project.Tests"
+			mv "tests/$project.Tests/Example.Tests.csproj" "tests/$project.Tests/$project.Tests.csproj"
+			mv Example.slnx "$project.slnx"
+		fi
 		# Rename `Example` only where it stands alone (namespaces, paths, assembly
 		# names), never inside a longer identifier such as ExampleFeature.
 		find "src/$project" "tests/$project.Tests" -type f \( -name '*.cs' -o -name '*.csproj' \) >"$work/dotnet-files"

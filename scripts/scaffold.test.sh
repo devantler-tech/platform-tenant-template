@@ -82,6 +82,7 @@ check_common() {
 		fail "$label: CI - Required Checks does not aggregate exactly the other jobs"
 	yq eval -e '.jobs.stack' "$dir/.github/workflows/ci.yaml" >/dev/null ||
 		fail "$label: ci.yaml has no stack job"
+	# shellcheck disable=SC2016
 	yq eval -e '(.updates | length) as $all | [.updates[] | select(.directory == "/" or (.directories // [] | join(",")) == "/")] | length == $all' \
 		"$dir/.github/dependabot.yml" >/dev/null ||
 		fail "$label: a Dependabot entry still points into the template's stacks/"
@@ -153,6 +154,7 @@ check_dotnet() {
 	grep -q 'ExampleFeature' "$dir/src/DemoApp/FeatureFlags.cs" ||
 		fail "$label: the rename rewrote an identifier that only contains the placeholder"
 	grep -q '^namespace DemoApp;' "$dir/src/DemoApp/HomePage.cs" || fail "$label: the namespace was not renamed"
+	# shellcheck disable=SC2016
 	grep -q '`src/DemoApp`' "$dir/AGENTS.md" || fail "$label: AGENTS.md still names the placeholder project"
 	if [ -f "$dir/Dockerfile" ]; then
 		grep -q '"DemoApp.dll"' "$dir/Dockerfile" || fail "$label: the Dockerfile runs the placeholder assembly"
@@ -196,6 +198,17 @@ sh "$dir/scripts/scaffold.sh" go --tenancy widget >/dev/null
 grep -qx 'module github.com/devantler-tech/widget' "$dir/go.mod" || fail "explicit name: go.mod not renamed"
 grep -q 'name: widget$' "$dir/deploy/deployment.yaml" || fail "explicit name: deploy/ not renamed"
 echo "ok: explicit name"
+
+# The name `example` already matches the .NET placeholder project, so nothing moves.
+dir=$work/example-name/checkout
+copy_template "$dir"
+sh "$dir/scripts/scaffold.sh" dotnet example >"$work/out" 2>&1 ||
+	{ cat "$work/out" >&2; fail "a .NET application named example did not scaffold"; }
+for path in Example.slnx src/Example/Example.csproj tests/Example.Tests/Example.Tests.csproj; do
+	[ -f "$dir/$path" ] || fail "example name: $path is missing"
+done
+grep -q '<title>example</title>' "$dir/src/Example/HomePage.cs" || fail "example name: the page title was not renamed"
+echo "ok: a .NET application named example"
 
 # refuse <description> <expected message> <scaffold arguments...> — the scaffold must
 # fail with the message and leave the copy untouched.
