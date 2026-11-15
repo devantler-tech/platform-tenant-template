@@ -84,8 +84,6 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: app
-      imagePullSecrets:
-        - name: ghcr-auth
       containers:
         # ⚠️ The container name MUST equal the repository name: cd.yaml →
         # publish-app pins the freshly built image digest into the container

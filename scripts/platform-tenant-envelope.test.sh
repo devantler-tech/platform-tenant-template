@@ -349,7 +349,6 @@ validate_platform() {
 	manual_root=$platform_root/k8s/bases/apps/ascoachingogvaner
 	manual_namespace=$manual_root/namespace.yaml
 	manual_service_account=$manual_root/service-account.yaml
-	manual_ghcr_auth=$manual_root/external-secret.yaml
 	manual_oci_repository=$manual_root/oci-repository.yaml
 	manual_role_binding=$manual_root/role-binding-ascoachingogvaner.yaml
 	manual_kustomization=$manual_root/flux-kustomization.yaml
@@ -360,7 +359,6 @@ validate_platform() {
 		"$vault_config" \
 		"$manual_namespace" \
 		"$manual_service_account" \
-		"$manual_ghcr_auth" \
 		"$manual_oci_repository" \
 		"$manual_role_binding" \
 		"$manual_kustomization" \
@@ -375,7 +373,6 @@ validate_platform() {
 	yq eval -e '
 		(.spec.resources[] | select(.id == "tenantNamespace").template) as $namespace
 		| (.spec.resources[] | select(.id == "serviceAccount").template) as $serviceAccount
-		| (.spec.resources[] | select(.id == "ghcrAuth").template) as $ghcrAuth
 		| (.spec.resources[] | select(.id == "ociRepository").template) as $ociRepository
 		| (.spec.resources[] | select(.id == "roleBinding").template) as $roleBinding
 		| (.spec.resources[] | select(.id == "kustomization")) as $kustomizationResource
@@ -384,7 +381,7 @@ validate_platform() {
 		| $kustomizationSopsResource.template as $kustomizationSops
 		| (.spec.schema.types.TenantSource.digest == "string | default=\"\" maxLength=71 pattern=\"^$|^sha256:[0-9a-f]{64}$\""
 			and .spec.schema.spec.source == "TenantSource | default={} validation=\"((!has(self.digest) || self.digest == '\'''\'') == (!has(self.publisherRevision) || self.publisherRevision == '\'''\'')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != '\'''\''))\" validation=\"!has(oldSelf.digest) || oldSelf.digest == '\'''\'' || (has(self.digest) && self.digest != '\'''\'')\"") as $sourceSchemaValid
-		| (([.spec.resources[] | select(.id == "ghcrAuth")] | length) == 1
+		| (([.spec.resources[] | select(.id == "ghcrAuth")] | length) == 0
 		and ([.spec.resources[] | select(.id == "ociRepository")] | length) == 1
 		and $namespace.kind == "Namespace"
 		and $namespace.metadata.name == "${schema.spec.name}"
@@ -396,21 +393,7 @@ validate_platform() {
 		and $serviceAccount.metadata.namespace == "${tenantNamespace.metadata.name}"
 		and $serviceAccount.metadata.labels."app.kubernetes.io/managed-by" == "kro"
 		and $serviceAccount.automountServiceAccountToken == false
-		and ($serviceAccount.imagePullSecrets | length) == 1
-		and $serviceAccount.imagePullSecrets[0].name == "ghcr-auth"
-		and $ghcrAuth.kind == "ExternalSecret"
-		and $ghcrAuth.metadata.name == "ghcr-auth"
-		and $ghcrAuth.metadata.namespace == "${tenantNamespace.metadata.name}"
-		and $ghcrAuth.spec.secretStoreRef.name == "openbao"
-		and $ghcrAuth.spec.secretStoreRef.kind == "ClusterSecretStore"
-		and $ghcrAuth.spec.target.name == "ghcr-auth"
-		and $ghcrAuth.spec.target.creationPolicy == "Owner"
-		and $ghcrAuth.spec.target.template.type == "kubernetes.io/dockerconfigjson"
-		and $ghcrAuth.spec.target.template.data.".dockerconfigjson" == "{{ .dockerconfigjson }}"
-		and ($ghcrAuth.spec.data | length) == 1
-		and $ghcrAuth.spec.data[0].secretKey == "dockerconfigjson"
-		and $ghcrAuth.spec.data[0].remoteRef.key == "infrastructure/ghcr/auth"
-		and $ghcrAuth.spec.data[0].remoteRef.property == "dockerconfigjson"
+		and ($serviceAccount | has("imagePullSecrets") | not)
 		and $ociRepository.kind == "OCIRepository"
 		and $ociRepository.metadata.name == "${schema.spec.name}"
 		and $ociRepository.metadata.namespace == "${tenantNamespace.metadata.name}"
@@ -420,7 +403,8 @@ validate_platform() {
 			or ($ociRepository.spec.ref == "${schema.spec.source.digest == \"\" ? {\"semver\": \">=1.0.0\"} : {\"digest\": schema.spec.source.digest}}"
 				and $sourceSchemaValid))
 		and $ociRepository.spec.url == "oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests"
-		and $ociRepository.spec.secretRef.name == "ghcr-auth"
+		and ($ociRepository.spec | has("secretRef") | not)
+		and ($ociRepository.spec | has("serviceAccountName") | not)
 		and (($ociRepository.spec.suspend // false) == false)
 		and $ociRepository.spec.verify.provider == "cosign"
 		and ($ociRepository.spec.verify | has("secretRef") | not)
@@ -490,26 +474,8 @@ validate_platform() {
 		and .metadata.namespace == strenv(tenant_name)
 		and .metadata.labels."app.kubernetes.io/managed-by" == "ksail"
 		and .automountServiceAccountToken == false
-		and (.imagePullSecrets | length) == 1
-		and .imagePullSecrets[0].name == "ghcr-auth"
+		and (has("imagePullSecrets") | not)
 	' "$manual_service_account" >/dev/null || fail "manual Platform tenant ServiceAccount no longer matches its namespace"
-
-	# shellcheck disable=SC2016
-	yq eval -e '
-		.kind == "ExternalSecret"
-		and .metadata.name == "ghcr-auth"
-		and .metadata.namespace == strenv(tenant_name)
-		and .spec.secretStoreRef.name == "openbao"
-		and .spec.secretStoreRef.kind == "ClusterSecretStore"
-		and .spec.target.name == "ghcr-auth"
-		and .spec.target.creationPolicy == "Owner"
-		and .spec.target.template.type == "kubernetes.io/dockerconfigjson"
-		and .spec.target.template.data.".dockerconfigjson" == "{{ .dockerconfigjson }}"
-		and (.spec.data | length) == 1
-		and .spec.data[0].secretKey == "dockerconfigjson"
-		and .spec.data[0].remoteRef.key == "infrastructure/ghcr/auth"
-		and .spec.data[0].remoteRef.property == "dockerconfigjson"
-	' "$manual_ghcr_auth" >/dev/null || fail "manual Platform tenant no longer produces the private GHCR pull secret"
 
 	# shellcheck disable=SC2016
 	yq eval -e '
@@ -520,7 +486,8 @@ validate_platform() {
 		and (.spec.ref | has("digest") | not)
 		and (.spec.ref | has("tag") | not)
 		and .spec.url == strenv(expected_manual_oci_url)
-		and .spec.secretRef.name == "ghcr-auth"
+		and (.spec | has("secretRef") | not)
+		and (.spec | has("serviceAccountName") | not)
 		and ((.spec.suspend // false) == false)
 		and .spec.verify.provider == "cosign"
 		and (.spec.verify | has("secretRef") | not)
@@ -528,7 +495,7 @@ validate_platform() {
 		and .spec.verify.matchOIDCIdentity[0].issuer == strenv(expected_oidc_issuer)
 		and (.spec.verify.matchOIDCIdentity[0].subject | tag == "!!str")
 		and (.spec.verify.matchOIDCIdentity[0].subject | test("[[:space:][:cntrl:]]") | not)
-	' "$manual_oci_repository" >/dev/null || fail "manual Platform tenant OCI source no longer requires the signed private artifact"
+	' "$manual_oci_repository" >/dev/null || fail "manual Platform tenant OCI source no longer requires the signed artifact"
 	manual_subject=$(yq eval -r '.spec.verify.matchOIDCIdentity[0].subject' "$manual_oci_repository")
 	# The manual source may add only its own repository's release workflow, and
 	# that repository is the tenant whose artifact path was bound above.
@@ -566,7 +533,7 @@ validate_platform() {
 		.kind == "Kustomization"
 		and ([.resources[] | select(. == "namespace.yaml")] | length) == 1
 		and ([.resources[] | select(. == "service-account.yaml")] | length) == 1
-		and ([.resources[] | select(. == "external-secret.yaml")] | length) == 1
+		and ([.resources[] | select(. == "external-secret.yaml")] | length) == 0
 		and ([.resources[] | select(. == "oci-repository.yaml")] | length) == 1
 		and ([.resources[] | select(. == "role-binding-ascoachingogvaner.yaml")] | length) == 1
 		and ([.resources[] | select(. == "flux-kustomization.yaml")] | length) == 1
@@ -1115,22 +1082,18 @@ run_mutation "KRO reconciler kind changed" "$rgd_path" \
 # shellcheck disable=SC2016
 run_mutation "KRO activation predicates overlap" "$rgd_path" \
 	'(.spec.resources[] | select(.id == "kustomization").includeWhen) = ["${schema.spec.sops}"]'
-run_mutation "KRO GHCR credential resource removed" "$rgd_path" \
-	'del(.spec.resources[] | select(.id == "ghcrAuth"))'
+run_mutation "KRO GHCR credential resource re-added" "$rgd_path" \
+	'.spec.resources += [{"id": "ghcrAuth", "template": {"kind": "ExternalSecret"}}]'
 run_mutation "KRO OCI source resource removed" "$rgd_path" \
 	'del(.spec.resources[] | select(.id == "ociRepository"))'
-run_mutation "KRO image-pull credential disconnected" "$rgd_path" \
-	'del(.spec.resources[] | select(.id == "serviceAccount").template.imagePullSecrets)'
-run_mutation "KRO GHCR source widened" "$rgd_path" \
-	'(.spec.resources[] | select(.id == "ghcrAuth").template.spec.data[0].remoteRef.key) = "apps/shared"'
-run_mutation "KRO GHCR target type changed" "$rgd_path" \
-	'(.spec.resources[] | select(.id == "ghcrAuth").template.spec.target.template.type) = "Opaque"'
-run_mutation "KRO GHCR docker config mapping removed" "$rgd_path" \
-	'del(.spec.resources[] | select(.id == "ghcrAuth").template.spec.target.template.data.".dockerconfigjson")'
+run_mutation "KRO image-pull credential re-attached" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "serviceAccount").template.imagePullSecrets) = [{"name": "ghcr-auth"}]'
 run_mutation "KRO OCI tenant path widened" "$rgd_path" \
 	'(.spec.resources[] | select(.id == "ociRepository").template.spec.url) = "oci://ghcr.io/devantler-tech/manifests"'
-run_mutation "KRO OCI pull credential disconnected" "$rgd_path" \
-	'del(.spec.resources[] | select(.id == "ociRepository").template.spec.secretRef)'
+run_mutation "KRO OCI pull credential re-attached" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.secretRef.name) = "ghcr-auth"'
+run_mutation "KRO OCI pull identity attached" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.serviceAccountName) = "ghcr-puller"'
 run_mutation "KRO OCI verification removed" "$rgd_path" \
 	'del(.spec.resources[] | select(.id == "ociRepository").template.spec.verify)'
 run_mutation "KRO OCI issuer widened" "$rgd_path" \
@@ -1161,18 +1124,14 @@ run_mutation "manual reconciler identity removed" "$manual_path/flux-kustomizati
 	'del(.spec.serviceAccountName)'
 run_mutation "manual target namespace removed" "$manual_path/flux-kustomization.yaml" \
 	'del(.spec.targetNamespace)'
-run_mutation "manual GHCR source property changed" "$manual_path/external-secret.yaml" \
-	'(.spec.data[0].remoteRef.property) = "token"'
-run_mutation "manual GHCR target type changed" "$manual_path/external-secret.yaml" \
-	'(.spec.target.template.type) = "Opaque"'
-run_mutation "manual GHCR docker config mapping removed" "$manual_path/external-secret.yaml" \
-	'del(.spec.target.template.data.".dockerconfigjson")'
-run_mutation "manual image-pull credential disconnected" "$manual_path/service-account.yaml" \
-	'del(.imagePullSecrets)'
+run_mutation "manual image-pull credential re-attached" "$manual_path/service-account.yaml" \
+	'.imagePullSecrets = [{"name": "ghcr-auth"}]'
 run_mutation "manual OCI tenant path changed" "$manual_path/oci-repository.yaml" \
 	'(.spec.url) = "oci://ghcr.io/devantler-tech/another-tenant/manifests"'
-run_mutation "manual OCI pull credential disconnected" "$manual_path/oci-repository.yaml" \
-	'del(.spec.secretRef)'
+run_mutation "manual OCI pull credential re-attached" "$manual_path/oci-repository.yaml" \
+	'.spec.secretRef.name = "ghcr-auth"'
+run_mutation "manual OCI pull identity attached" "$manual_path/oci-repository.yaml" \
+	'.spec.serviceAccountName = "ghcr-puller"'
 run_mutation "manual OCI verification removed" "$manual_path/oci-repository.yaml" \
 	'del(.spec.verify)'
 run_mutation "manual OCI subject widened" "$manual_path/oci-repository.yaml" \
@@ -1218,8 +1177,8 @@ run_mutation "manual Flux artifact source crosses namespace" "$manual_path/flux-
 	'.spec.sourceRef.namespace = "another-tenant"'
 run_mutation "manual Namespace removed from inventory" "$manual_path/kustomization.yaml" \
 	'.resources -= ["namespace.yaml"]'
-run_mutation "manual GHCR credential removed from inventory" "$manual_path/kustomization.yaml" \
-	'.resources -= ["external-secret.yaml"]'
+run_mutation "manual GHCR credential returned to inventory" "$manual_path/kustomization.yaml" \
+	'.resources += ["external-secret.yaml"]'
 run_mutation "manual OCI source removed from inventory" "$manual_path/kustomization.yaml" \
 	'.resources -= ["oci-repository.yaml"]'
 
