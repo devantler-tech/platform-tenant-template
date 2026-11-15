@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
 # scaffold.sh — turn a repository created from this template into your application.
 #
-# Usage: scripts/scaffold.sh <go|dotnet|none> [--tenancy] [name]
+# Usage: scripts/scaffold.sh <go|dotnet|svelte|none> [--tenancy] [name]
 #
-#   go, dotnet  lay that stack's source, tests, lint config, Dockerfile and CI job
+#   go, dotnet, svelte
+#               lay that stack's source, tests, lint config, Dockerfile and CI job
 #               over the template, from stacks/<stack>/.
 #   none        keep the placeholder CI job and Dockerfile and bring your own stack.
 #   --tenancy   make the application a devantler-tech platform tenant: keep deploy/,
@@ -26,7 +27,7 @@ fail() {
 }
 
 usage() {
-	sed -n '4,13p' "$script_dir/scaffold.sh" | sed 's/^# \{0,1\}//'
+	sed -n '4,14p' "$script_dir/scaffold.sh" | sed 's/^# \{0,1\}//'
 }
 
 stack=''
@@ -57,8 +58,8 @@ if [ -z "$stack" ]; then
 	exit 1
 fi
 case $stack in
-go | dotnet | none) ;;
-*) fail "unknown stack '$stack': choose go, dotnet or none" ;;
+go | dotnet | svelte | none) ;;
+*) fail "unknown stack '$stack': choose go, dotnet, svelte or none" ;;
 esac
 
 name=${name:-$(basename -- "$repo_root")}
@@ -98,7 +99,7 @@ rewrite() {
 # `<!-- <tag>:end -->` line around a block, or a `# <tag>` suffix on a single line.
 
 # drop <tag> <file> — delete every block and line marked <tag>, and squeeze the
-# blank lines left behind.
+# blank lines left behind: one at most between lines, none at the start or end.
 drop() {
 	# shellcheck disable=SC2016
 	rewrite "$2" '
@@ -106,8 +107,8 @@ drop() {
 		$0 ~ "(#|<!--) " tag ":end" { skip = 0; next }
 		skip { next }
 		$0 ~ " # " tag "$" { next }
-		/^$/ { if (blank) next; blank = 1; print; next }
-		{ blank = 0; print }
+		/^$/ { blank = 1; next }
+		{ if (blank && printed) print ""; blank = 0; printed = 1; print }
 	' -v tag="$1"
 }
 
@@ -164,7 +165,8 @@ else
 	(cd "$source_dir" && find . -type f) | while IFS= read -r file; do
 		case $file in
 		./AGENTS.fragment.md | ./dependabot.fragment.yml | ./.gitignore | \
-			./.github/workflows/ci-job.yaml | */bin/* | */obj/* | */TestResults/*)
+			./.github/workflows/ci-job.yaml | */bin/* | */obj/* | */TestResults/* | \
+			*/node_modules/* | */.svelte-kit/* | ./build/*)
 			continue
 			;;
 		esac
@@ -176,9 +178,10 @@ else
 	awk 'found { print } /^jobs:$/ { found = 1 }' "$source_dir/.github/workflows/ci-job.yaml" >"$work/job.yaml"
 	replace stack "$ci" "$work/job.yaml"
 	replace stack AGENTS.md "$source_dir/AGENTS.fragment.md"
+	# The stack's Dependabot entries are everything after `updates:` in its fragment.
 	{
 		echo
-		cat "$source_dir/dependabot.fragment.yml"
+		awk 'found { print } /^updates:$/ { found = 1 }' "$source_dir/dependabot.fragment.yml"
 	} >>"$dependabot"
 	if [ -f "$source_dir/.gitignore" ]; then
 		{
@@ -207,7 +210,19 @@ else
 		substitute "s/Example\\([^A-Za-z0-9_]\\)/$project\\1/g; s/Example\$/$project/; s#<title>app</title>#<title>$name</title>#" \
 			"$project.slnx" Dockerfile $(cat "$work/dotnet-files")
 		;;
+	svelte)
+		substitute "s#\"name\": \"app\"#\"name\": \"$name\"#; s#<title>app</title>#<title>$name</title>#; s#flagDomain = 'app'#flagDomain = '$name'#" \
+			package.json package-lock.json src/routes/+page.svelte src/lib/server/flags.ts
+		;;
 	esac
+fi
+
+# The shared Go validator already runs MegaLinter, so a Go application does not
+# call the template's lint job as well.
+if [ "$stack" = go ]; then
+	drop lint "$ci"
+else
+	keep lint "$ci"
 fi
 
 # --- 2. Tenancy ---------------------------------------------------------------
@@ -220,7 +235,7 @@ else
 	drop tenancy "$ci"
 	drop tenancy "$dependabot"
 	drop tenancy AGENTS.md
-	rm -rf deploy Dockerfile .dockerignore .github/workflows/cd.yaml \
+	rm -rf deploy Dockerfile .dockerignore renovate.json .github/workflows/cd.yaml \
 		scripts/publish-pin-approved.sh scripts/publish-pin-approved.test.sh \
 		scripts/workflow-caller-pin-contract.test.sh
 	# Keep template-sync from bringing the removed tenant plumbing back.
@@ -229,6 +244,7 @@ else
 # --- Not a platform tenant (scaffolded without --tenancy) ---
 # Remove these lines, and copy the files back from the template, to become one.
 .github/workflows/cd.yaml
+renovate.json
 scripts/publish-pin-approved.sh
 scripts/publish-pin-approved.test.sh
 scripts/workflow-caller-pin-contract.test.sh

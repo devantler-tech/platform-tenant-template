@@ -385,7 +385,7 @@ run_mutation "stack dependency removed from aggregate" \
 	'.jobs."ci-required-checks".needs = ["workflow-caller-pins", "delivery-inputs", "publish-pin-approved"]' '' '' '' '' '' \
 	'depend on every other job exactly once'
 run_mutation "new job left out of the aggregate" \
-	'.jobs.lint = {"name": "Lint", "runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}' '' '' '' '' '' \
+	'.jobs."unaggregated-check" = {"name": "Unaggregated check", "runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}' '' '' '' '' '' \
 	'depend on every other job exactly once'
 run_mutation "publish-pin job removed" \
 	'del(.jobs."publish-pin-approved")'

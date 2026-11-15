@@ -6,27 +6,30 @@ the template locally.
 
 ## What the scaffold changes
 
-`scripts/scaffold.sh <go|dotnet|none> [--tenancy] [name]` runs once in a repository created from
+`scripts/scaffold.sh <go|dotnet|svelte|none> [--tenancy] [name]` runs once in a repository created from
 this template. `name` defaults to the checkout's directory name and must be a DNS-1123 label equal
 to the repository name.
 
-- **Stack.** `go` and `dotnet` copy `stacks/<stack>/` over the template: the source and tests,
+- **Stack.** `go`, `dotnet` and `svelte` copy `stacks/<stack>/` over the template: the source and tests,
   lint and analyzer configuration, a Dockerfile, and the stack's CI job, which replaces the
   placeholder `stack` job in `.github/workflows/ci.yaml`. The stack's Dependabot ecosystem is
   appended to `.github/dependabot.yml` and its `## Stack` and `## Validation` text replaces the
   placeholders in `AGENTS.md`. The Go module becomes `github.com/devantler-tech/<name>`; the .NET
-  solution, projects and namespace become the PascalCase form of `<name>`. `none` keeps the
-  placeholder job and Dockerfile for a stack you bring yourself.
+  solution, projects and namespace become the PascalCase form of `<name>`; the SvelteKit package
+  becomes `<name>`. `none` keeps the placeholder job and Dockerfile for a stack you bring yourself.
+  Every stack except Go keeps the `lint` job, which calls the shared MegaLinter workflow; a Go
+  application drops it because the shared Go validator already runs MegaLinter.
 - **Tenancy.** With `--tenancy` the application stays a platform tenant: `deploy/`, `cd.yaml`,
-  the image's Dependabot entry and the CI jobs that guard the image and manifests stay, and
+  the image's Dependabot entry, `renovate.json` and the CI jobs that guard the image and manifests
+  stay, and
   `scripts/rename-placeholders.sh` renames `deploy/` (below). Without it, all of them are
   removed and the tenant-only template files are added to `.templatesyncignore`, so template-sync
   never brings them back.
 - **Template machinery.** `stacks/`, the scaffold, the template's own validation workflows and its
   scaffold-time tests are removed; `.templatesyncignore` already lists each of them.
 
-The edits follow `stack`, `tenancy` and `template` markers in `ci.yaml`, `dependabot.yml` and
-`AGENTS.md`, so none are left behind. The CI aggregate consumes `needs.*.result`, so dropping a job
+The edits follow `stack`, `lint`, `tenancy` and `template` markers in `ci.yaml`, `dependabot.yml`
+and `AGENTS.md`, so none are left behind. The CI aggregate consumes `needs.*.result`, so dropping a job
 and its `needs` entry leaves nothing else to edit. The scaffold refuses an unknown stack or option,
 an invalid name, a second run and the upstream template checkout before it changes anything.
 
@@ -78,6 +81,12 @@ the template excludes, add the line `!<entry>` to your list.
 |---|---|
 | `.github/workflows/cd.yaml` (*tenant*) | On a `v*` tag, calls `publish-app.yaml` to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact |
 | `.github/workflows/release.yaml` | semantic-release on `main` (cuts the `v*` tags that drive `cd.yaml`) |
+| `.github/workflows/codeql.yaml` | Advanced CodeQL for the languages found in the repository, reading `.github/codeql/codeql-config.yml`; off until default setup is off and `CODEQL_SETUP=advanced` |
+| `.github/workflows/lint.yaml`, `.github/mega-linter.base.yml` | The shared MegaLinter job `ci.yaml` calls, and the base configuration `.mega-linter.yml` extends |
+| `.markdownlint.json` | The shared Markdown rules MegaLinter applies |
+| `.yamllint.yml` | The shared YAML rules MegaLinter applies |
+| `.coderabbit.yaml` | Shared CodeRabbit settings, layered over the organization's with `inheritance: true` |
+| `renovate.json` (*tenant*) | Renovate for `deploy/` image tags and Helm charts only, extending the organization preset; Dependabot keeps everything else |
 | `.github/workflows/template-sync.yaml` | Opens the weekly template-sync PR |
 | `CLAUDE.md` | `@AGENTS.md` shim |
 | `docs/REFERENCE.md` | This reference |
@@ -113,6 +122,8 @@ AGENTS.md
 .github/CODEOWNERS
 .github/workflows/ci.yaml
 .github/dependabot.yml
+.mega-linter.yml
+.github/codeql/codeql-config.yml
 .releaserc
 .gitignore
 Dockerfile
@@ -147,6 +158,7 @@ scripts/platform-vpa-floor-contract.test.sh
 
 # Only without --tenancy: the tenant plumbing the scaffold removed.
 .github/workflows/cd.yaml
+renovate.json
 scripts/publish-pin-approved.sh
 scripts/publish-pin-approved.test.sh
 scripts/workflow-caller-pin-contract.test.sh

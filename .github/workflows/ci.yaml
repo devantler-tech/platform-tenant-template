@@ -24,6 +24,16 @@ jobs:
         run: echo "Replace this job with your stack's lint, test, and build steps."
   # stack:end
 
+  # lint:begin
+  # Shared MegaLinter checks for workflows, scripts, Dockerfiles, Markdown, YAML and
+  # JSON. Go applications drop this job: the shared Go validator lints them.
+  lint:
+    name: Lint
+    uses: ./.github/workflows/lint.yaml
+    permissions:
+      contents: read
+  # lint:end
+
   # tenancy:begin
   workflow-caller-pins:
     name: Workflow caller pins
@@ -111,6 +121,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - stack
+      - lint # lint
       - workflow-caller-pins # tenancy
       - delivery-inputs # tenancy
       - publish-pin-approved # tenancy

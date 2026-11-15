@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# Shared CodeRabbit settings for every application made from application-template.
+# The template owns this file and template-sync keeps it current, so a change here
+# reaches every application. `inheritance: true` layers it over the organization's
+# CodeRabbit settings. To diverge, list `.coderabbit.yaml` in your
+# `.templatesyncignore` and own your copy.
+inheritance: true
+reviews:
+  # A review finding is a comment to fix or refute, not a failed status check:
+  # CI - Required Checks is the merge gate.
+  fail_commit_status: false
+  pre_merge_checks:
+    docstrings:
+      mode: warning

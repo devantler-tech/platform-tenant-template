@@ -1,7 +1,7 @@
 # application-template
 
-Start a new devantler-tech application from one template: pick a **Go**, **.NET** or
-bring-your-own stack, and choose whether it runs on the
+Start a new devantler-tech application from one template: pick a **Go**, **.NET**, **SvelteKit**
+or bring-your-own stack, and choose whether it runs on the
 [devantler-tech platform](https://github.com/devantler-tech/platform) as a **tenant**. One
 command lays down the stack and, if you want it, the tenancy; a weekly sync keeps the shared
 plumbing current afterwards.
@@ -16,8 +16,9 @@ flowchart LR
     template[application-template] --> scaffold["scripts/scaffold.sh &lt;stack&gt; [--tenancy]"]
     scaffold --> go[Go service]
     scaffold --> dotnet[.NET service]
+    scaffold --> svelte[SvelteKit app]
     scaffold --> none[Your own stack]
-    go & dotnet & none --> tenancy{--tenancy?}
+    go & dotnet & svelte & none --> tenancy{--tenancy?}
     tenancy -- yes --> tenant[Platform tenant: deploy/, signed image and manifests, delivery gates]
     tenancy -- no --> app[Application: CI and releases only]
 ```
@@ -28,13 +29,33 @@ flowchart LR
 |---|---|
 | `go` | A Go `net/http` server with OpenFeature feature flags, table-driven tests, golangci-lint v2 and the shared Go validator in CI |
 | `dotnet` | An ASP.NET Core minimal API on .NET 11 with OpenFeature, xUnit v3 tests and warnings-as-errors analyzers, built and tested in CI |
-| `none` | A placeholder CI job and Dockerfile, for a stack you bring yourself, such as Node |
+| `svelte` | A SvelteKit 3 and Svelte 5 app on Node 26 with `adapter-node`, OpenFeature, Vitest, svelte-check and ESLint |
+| `none` | A placeholder CI job and Dockerfile, for a stack you bring yourself |
 | `--tenancy` | `deploy/` Kustomize manifests, a signed image and manifests release on every `v*` tag, and CI that builds the image and renders `deploy/` before merge |
 
-Every application gets Conventional-Commit releases, Dependabot, agent instructions
-([`AGENTS.md`](AGENTS.md)) and the weekly template sync. Both stacks serve a placeholder page at
-`GET /` on port 3000, which is where the tenant's probes look, so a new tenant deploys before you
-write any code.
+Every stack serves a placeholder page at `GET /` on port 3000, which is where the tenant's probes
+look, so a new tenant deploys before you write any code.
+
+## Shared across every application
+
+The weekly template sync keeps one copy of each cross-cutting concern current in every
+application. Where an application needs to differ, it changes its own overlay file, which the sync
+never touches, rather than the shared file:
+
+| Concern | Shared, kept current by the sync | Yours, to diverge |
+|---|---|---|
+| Releases | `release.yaml`: Conventional-Commit releases | `.releaserc` |
+| Linting | `lint.yaml` and `.github/mega-linter.base.yml`: MegaLinter for workflows, scripts, Dockerfiles, Markdown, YAML, JSON, manifests and secrets; Go applications lint through the shared Go validator instead | `.mega-linter.yml`, which extends the base |
+| Markdown and YAML style | `.markdownlint.json`, `.yamllint.yml` | list them in `.templatesyncignore` and own them |
+| Code scanning | `codeql.yaml`: advanced CodeQL, with languages detected from your files | `.github/codeql/codeql-config.yml` |
+| Code review | `.coderabbit.yaml`, layered over the organization's CodeRabbit settings | list it in `.templatesyncignore` and own it |
+| Dependency updates | Renovate for `deploy/` image tags and Helm charts only (tenants), extending the organization preset | `.github/dependabot.yml` for packages, Actions and the Dockerfile |
+| Agent instructions | `CLAUDE.md` | `AGENTS.md` |
+
+The organization's required workflows (dependency review, workflow scanning, auto-merge policy
+and PR admission) apply to every repository without any file here. Advanced CodeQL stays off
+until the repository's default setup is turned off and the `CODEQL_SETUP` variable is set to
+`advanced`; [`codeql.yaml`](.github/workflows/codeql.yaml) explains the switch.
 
 ## Try it locally
 

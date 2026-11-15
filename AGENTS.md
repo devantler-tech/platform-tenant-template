@@ -110,10 +110,12 @@ Begin every agent-authored pull request, issue, and comment with
 application as **private** unless its repository is public — be conservative and never
 expose its contents publicly.
 
-**Shared plumbing is template-owned:** `release.yaml`, `template-sync.yaml`,
-`CLAUDE.md`, `zizmor.yml` and, for a platform tenant, `cd.yaml` come from
+**Shared plumbing is template-owned:** `release.yaml`, `template-sync.yaml`, `codeql.yaml`,
+`lint.yaml`, `.github/mega-linter.base.yml`, `.markdownlint.json`, `.yamllint.yml`, `.coderabbit.yaml`,
+`CLAUDE.md`, `zizmor.yml` and, for a platform tenant, `cd.yaml` and `renovate.json` come from
 [application-template](https://github.com/devantler-tech/platform-tenant-template)
-and are kept in sync — propose changes to them upstream, not here.
+and are kept in sync — propose changes to them upstream, not here. To diverge, change your
+overlay (`.mega-linter.yml`, `.github/codeql/codeql-config.yml`) instead.
 
 **Task menu** (conservative; ≤1 item per run): triage issues/PRs; dependency &
 security hygiene; keep CI green; confident low-risk fixes; merge the template-sync

@@ -1,0 +1,10 @@
+# This application's MegaLinter settings. It extends the shared base, which the
+# template owns and template-sync keeps current, so put only what differs here.
+# Your values win over the base; the lists named in CONFIG_PROPERTIES_TO_APPEND are
+# added to the base's lists instead of replacing them.
+# Reference: https://megalinter.io/latest/config-file/
+EXTENDS: .github/mega-linter.base.yml
+CONFIG_PROPERTIES_TO_APPEND:
+  - DISABLE
+  - DISABLE_LINTERS
+  - EXCLUDED_DIRECTORIES

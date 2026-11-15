@@ -11,11 +11,15 @@
 # Everything NOT listed here is TEMPLATE-OWNED shared plumbing kept current in
 # every application by template-sync — change those upstream in
 # devantler-tech/application-template, never by editing them in an application.
-# Template-owned files: .github/workflows/{release,template-sync}.yaml, CLAUDE.md,
-# docs/REFERENCE.md, zizmor.yml and, for a platform tenant,
-# .github/workflows/cd.yaml, scripts/workflow-caller-pin-contract.test.sh and
-# scripts/publish-pin-approved.sh (+ its test). An application scaffolded without
-# --tenancy lists the tenant files below, so they never come back.
+# Template-owned files: .github/workflows/{release,template-sync,stale-issues,codeql,lint}.yaml,
+# .github/mega-linter.base.yml, .coderabbit.yaml, .markdownlint.json, .yamllint.yml, CLAUDE.md,
+# docs/REFERENCE.md, zizmor.yml and, for a platform tenant, .github/workflows/cd.yaml, renovate.json,
+# scripts/workflow-caller-pin-contract.test.sh and scripts/publish-pin-approved.sh
+# (+ its test). Where a shared file has an app-owned overlay (.mega-linter.yml
+# extends .github/mega-linter.base.yml; codeql.yaml reads
+# .github/codeql/codeql-config.yml), change the overlay to diverge, not the shared
+# file. An application scaffolded without --tenancy lists the tenant files below, so
+# they never come back.
 
 # --- Identity & docs (tenant-specific) ---
 AGENTS.md
@@ -30,6 +34,10 @@ LICENSE
 .github/dependabot.yml
 .releaserc
 .gitignore
+
+# --- The application's overlays on shared configuration ---
+.mega-linter.yml
+.github/codeql/codeql-config.yml
 
 # --- The tenant's own application ---
 # deploy/ holds the example app's Kustomize manifests; a tenant replaces them with
