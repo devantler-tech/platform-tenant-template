@@ -404,6 +404,7 @@ validate_platform() {
 				and $sourceSchemaValid))
 		and $ociRepository.spec.url == "oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests"
 		and ($ociRepository.spec | has("secretRef") | not)
+		and ($ociRepository.spec | has("serviceAccountName") | not)
 		and (($ociRepository.spec.suspend // false) == false)
 		and $ociRepository.spec.verify.provider == "cosign"
 		and ($ociRepository.spec.verify | has("secretRef") | not)
@@ -486,6 +487,7 @@ validate_platform() {
 		and (.spec.ref | has("tag") | not)
 		and .spec.url == strenv(expected_manual_oci_url)
 		and (.spec | has("secretRef") | not)
+		and (.spec | has("serviceAccountName") | not)
 		and ((.spec.suspend // false) == false)
 		and .spec.verify.provider == "cosign"
 		and (.spec.verify | has("secretRef") | not)
@@ -1090,6 +1092,8 @@ run_mutation "KRO OCI tenant path widened" "$rgd_path" \
 	'(.spec.resources[] | select(.id == "ociRepository").template.spec.url) = "oci://ghcr.io/devantler-tech/manifests"'
 run_mutation "KRO OCI pull credential re-attached" "$rgd_path" \
 	'(.spec.resources[] | select(.id == "ociRepository").template.spec.secretRef.name) = "ghcr-auth"'
+run_mutation "KRO OCI pull identity attached" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.serviceAccountName) = "ghcr-puller"'
 run_mutation "KRO OCI verification removed" "$rgd_path" \
 	'del(.spec.resources[] | select(.id == "ociRepository").template.spec.verify)'
 run_mutation "KRO OCI issuer widened" "$rgd_path" \
@@ -1126,6 +1130,8 @@ run_mutation "manual OCI tenant path changed" "$manual_path/oci-repository.yaml"
 	'(.spec.url) = "oci://ghcr.io/devantler-tech/another-tenant/manifests"'
 run_mutation "manual OCI pull credential re-attached" "$manual_path/oci-repository.yaml" \
 	'.spec.secretRef.name = "ghcr-auth"'
+run_mutation "manual OCI pull identity attached" "$manual_path/oci-repository.yaml" \
+	'.spec.serviceAccountName = "ghcr-puller"'
 run_mutation "manual OCI verification removed" "$manual_path/oci-repository.yaml" \
 	'del(.spec.verify)'
 run_mutation "manual OCI subject widened" "$manual_path/oci-repository.yaml" \
