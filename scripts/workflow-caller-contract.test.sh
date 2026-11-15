@@ -83,16 +83,20 @@ validate_contract() {
 		fail 'the portable caller fixture must reach tenants through template sync'
 	fi
 
-	yq eval -e '.jobs.publish.uses | test("^devantler-tech/[.]github/[.]github/workflows/publish-app[.]yaml@[0-9a-f]{40}$")' \
+	# The starter signs as this repository: a direct publish-app action, never the shared
+	# reusable publisher whose revisions the platform had to approve one by one.
+	yq eval -e '(.jobs.publish | has("uses") | not)
+		and ([.jobs.publish.steps[] | select(.id == "publish")] | length == 1)
+		and ((.jobs.publish.steps[] | select(.id == "publish")).uses | test("^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$"))' \
 		"$cd_file" >/dev/null ||
-		fail 'the starter must ship the maintained application publisher'
+		fail 'the starter must sign its own releases with the publish-app action'
 
 	sh "$portable_contract" --validate "$cd_file" "$release_file" "$template_sync_file" ||
 		fail 'the portable workflow-caller pin contract rejected the caller set'
 
-	yq eval -e '.jobs.publish.with."enable-caller-pin" == true' \
-		"$cd_file" >/dev/null ||
-		fail 'the publish caller must keep the producer-side ref guard enabled'
+	# The minimal tag-only, credential-free execution frame the own-release subject relies on.
+	sh "$repo_root/scripts/publish-pin-approved.sh" "$cd_file" "$cd_file" >/dev/null ||
+		fail 'the publish caller must keep the minimal own-release signing frame'
 
 	# Canonical release and sync callers move together within their own catalogue.
 	# The maintained publisher has an independent, explicitly approved version. Dependabot treats
@@ -264,11 +268,15 @@ run_mutation() {
 }
 
 run_mutation 'publish caller SHA pin removed' cd \
-	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@main"'
+	'.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/publish-app@main"'
 run_mutation 'legacy publisher restored' cd \
-	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328"'
-run_mutation 'publisher-side caller pin disabled' cd \
-	'.jobs.publish.with."enable-caller-pin" = false'
+	'.jobs.publish = {"name": "Publish", "uses": "devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328", "with": {"app-name": "x"}}'
+run_mutation 'shared publisher restored' cd \
+	'.jobs.publish = {"name": "Publish", "uses": "devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812", "with": {"app-name": "x", "enable-caller-pin": true}}'
+run_mutation 'publish checkout keeps its credentials' cd \
+	'.jobs.publish.steps[1].with."persist-credentials" = true'
+run_mutation 'publish runs on a branch push' cd \
+	'.["on"].push.branches = ["main"]'
 run_mutation 'release caller SHA pin removed' release \
 	'.jobs.release.uses = "devantler-tech/.github/.github/workflows/create-release.yaml@main"'
 run_mutation 'release issue isolation disabled' release \
@@ -354,7 +362,7 @@ run_fleet_mutation() {
 	cp "$dependabot_config" "$mutation_dir/dependabot.yml"
 
 	for pair in \
-		"cd.yaml|.jobs.publish.uses|publish-app" \
+		"cd.yaml|.jobs.publish.steps[2].uses|publish-app" \
 		"release.yaml|.jobs.release.uses|create-release" \
 		"template-sync.yaml|.jobs.\"template-sync\".uses|template-sync"; do
 		mutant_file=${pair%%|*}
@@ -366,8 +374,10 @@ run_fleet_mutation() {
 		else
 			[ "$mutant_workflow" != publish-app ] || continue
 		fi
+		mutant_ref="devantler-tech/.github/.github/workflows/${mutant_workflow}.yaml@${ref}"
+		[ "$mutant_workflow" != publish-app ] || mutant_ref="devantler-tech/.github/actions/publish-app@${ref}"
 		yq eval \
-			"${mutant_path} = \"devantler-tech/.github/.github/workflows/${mutant_workflow}.yaml@${ref}\" |
+			"${mutant_path} = \"${mutant_ref}\" |
 			 ${mutant_path} line_comment = \"${version}\"" \
 			"$mutation_dir/$mutant_file" > "$mutation_dir/mutant.yaml"
 		mv "$mutation_dir/mutant.yaml" "$mutation_dir/$mutant_file"
@@ -388,7 +398,7 @@ run_fleet_mutation() {
 }
 
 run_mutation 'publish caller rolled back while the others stay current' cd \
-	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@77cfa9cfc5514ebe1429f64e681afd181cf4515d"'
+	'.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/publish-app@77cfa9cfc5514ebe1429f64e681afd181cf4515d"'
 run_mutation 'release caller rolled back while the others stay current' release \
 	'.jobs.release.uses = "devantler-tech/.github/.github/workflows/create-release.yaml@4b00bd6698af033dc472b39a7e609173fe38dfb1"'
 run_fleet_mutation 'publisher below reviewed floor' \

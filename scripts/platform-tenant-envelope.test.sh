@@ -568,6 +568,20 @@ cp \
 	"$platform_root/k8s/bases/infrastructure/vault-config/job.yaml" \
 	"$baseline/k8s/bases/infrastructure/vault-config/job.yaml"
 
+# The starter signs as this repository. Platform still accepts the shared
+# reusable publisher while consumers move (ADR 0017), so the shared caller form
+# keeps its own baseline, derived from the starter's trigger and authority.
+shared_publish_workflow=$mutation_dir/shared-publisher-cd.yaml
+# shellcheck disable=SC2016
+yq eval '
+	del(.jobs.publish.steps, .jobs.publish."runs-on", .jobs.publish."timeout-minutes", .jobs.publish.concurrency)
+	| .jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"
+	| .jobs.publish.with = {"app-name": "${{ github.event.repository.name }}", "enable-caller-pin": true}
+' "$publish_workflow" > "$shared_publish_workflow"
+# A subshell keeps the starter's validated publisher identity in place.
+(validate_publish_workflow "$shared_publish_workflow") ||
+	fail "the shared publisher baseline no longer has the pinned minimal signing contract"
+
 # Counted, not hand-written — so that adding a mutation cannot leave the PASS
 # line overstating or understating coverage.
 #
@@ -603,8 +617,9 @@ run_publish_mutation() {
 	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
+	mutant_base=${3:-$publish_workflow}
 	mutant_workflow=$mutation_dir/cd-mutant.yaml
-	yq eval "$mutation" "$publish_workflow" > "$mutant_workflow"
+	yq eval "$mutation" "$mutant_base" > "$mutant_workflow"
 	if (validate_publish_workflow "$mutant_workflow") >/dev/null 2>&1; then
 		fail "publish mutation passed: $description"
 	fi
@@ -819,7 +834,7 @@ run_producer_control() {
 		"$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
 	mv "$mutation_dir/producer-control.yaml" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
 	CALLER_CONTROL=$control_caller yq eval '.jobs.publish.uses = strenv(CALLER_CONTROL)' \
-		"$publish_workflow" > "$mutation_dir/producer-cd.yaml"
+		"$shared_publish_workflow" > "$mutation_dir/producer-cd.yaml"
 	case "${5:-}" in
 		own-publisher|own-publisher-env|own-publisher-branch)
 			cp "$script_dir/fixtures/own-publisher.yaml" "$mutation_dir/producer-cd.yaml"
@@ -1186,12 +1201,22 @@ run_publish_mutation "tag trigger removed" 'del(.["on"].push.tags)'
 run_publish_mutation "tenant-only guard removed" 'del(.jobs.publish.if)'
 run_publish_mutation "package publication permission removed" 'del(.jobs.publish.permissions.packages)'
 run_publish_mutation "OIDC signing permission removed" 'del(.jobs.publish.permissions."id-token")'
-run_publish_mutation "producer workflow unpinned" \
-	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@main"'
-run_publish_mutation "producer workflow changed" \
-	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/other.yaml@47f0d9b632581a613963a2d25c243713f24c32a0"'
+run_publish_mutation "producer action unpinned" \
+	'.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/publish-app@main"'
+run_publish_mutation "producer action changed" \
+	'.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/other@47f0d9b632581a613963a2d25c243713f24c32a0"'
 run_publish_mutation "application identity hard-coded" \
-	'.jobs.publish.with."app-name" = "app"'
+	'.jobs.publish.steps[2].with."app-name" = "app"'
+run_publish_mutation "checkout keeps its credentials" \
+	'.jobs.publish.steps[1].with."persist-credentials" = true'
+run_publish_mutation "shared and own publisher combined" \
+	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"'
+run_publish_mutation "shared producer workflow unpinned" \
+	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@main"' "$shared_publish_workflow"
+run_publish_mutation "shared producer workflow changed" \
+	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/other.yaml@47f0d9b632581a613963a2d25c243713f24c32a0"' "$shared_publish_workflow"
+run_publish_mutation "shared application identity hard-coded" \
+	'.jobs.publish.with."app-name" = "app"' "$shared_publish_workflow"
 run_publish_mutation "publisher authority widened" \
 	'.jobs.publish.permissions.issues = "write"'
 run_publish_mutation "branch publication enabled" \
@@ -1204,8 +1229,8 @@ run_publish_mutation "second package publisher added" \
 # restores the unenforced default. Deleting the pair is what would let the
 # caller-pin requirement decay back to opt-in without a failing test.
 run_publish_mutation "caller SHA-pin enforcement removed" \
-	'del(.jobs.publish.with."enable-caller-pin")'
+	'del(.jobs.publish.with."enable-caller-pin")' "$shared_publish_workflow"
 run_publish_mutation "caller SHA-pin enforcement disabled" \
-	'.jobs.publish.with."enable-caller-pin" = false'
+	'.jobs.publish.with."enable-caller-pin" = false' "$shared_publish_workflow"
 
 echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations + ${subject_controls_run} subject controls + ${producer_controls_run} producer controls)"

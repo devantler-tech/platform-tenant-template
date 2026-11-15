@@ -80,7 +80,7 @@ the template excludes, add the line `!<entry>` to your list.
 
 | File | Purpose |
 |---|---|
-| `.github/workflows/cd.yaml` (*tenant*) | On a `v*` tag, calls `publish-app.yaml` to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact |
+| `.github/workflows/cd.yaml` (*tenant*) | On a `v*` tag, runs the `actions/publish-app` action to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact as this repository |
 | `.github/workflows/release.yaml` | semantic-release on `main` (cuts the `v*` tags that drive `cd.yaml`) |
 | `.github/workflows/codeql.yaml` | Advanced CodeQL for the languages found in the repository, reading `.github/codeql/codeql-config.yml`; off until default setup is off and `CODEQL_SETUP=advanced` |
 | `.github/workflows/lint.yaml`, `.github/mega-linter.base.yml` | The shared MegaLinter job `ci.yaml` calls, and the base configuration `.mega-linter.yml` extends |
@@ -182,14 +182,14 @@ image, so their updates reach production on their own. GitHub Actions updates
 use the `ci` prefix (set in `.github/dependabot.yml`) and release nothing.
 Tenants own both files, so an existing tenant adds the `build(deps)` rule and
 the `ci` prefix itself.
-Each tag triggers `cd.yaml`, which calls the platform's
-[`publish-app.yaml`](https://github.com/devantler-tech/.github/blob/main/.github/workflows/publish-app.yaml)
-reusable workflow to build the image, **pin its digest into
-`deploy/deployment.yaml`**, push the manifests as an OCI artifact, and
-**cosign-sign** both. The platform's `OCIRepository` verifies that signature, so
-only artifacts from this trusted workflow are eligible for reconciliation after
-the platform has registered the tenant and its applicable publisher-approval
-checks pass. Workflow configuration alone does not prove that publication or
+Each tag triggers `cd.yaml`, which runs the
+[`actions/publish-app`](https://github.com/devantler-tech/.github/tree/main/actions/publish-app)
+action to build the image, **pin its digest into the app manifest**
+(`deploy/base/deployment.yaml` when it exists, else `deploy/deployment.yaml`),
+push the manifests as an OCI artifact, and **cosign-sign** both. The signature
+names this repository's own `cd.yaml` on the release tag, and the platform's
+`OCIRepository` trusts each registered tenant's own repository on release tags
+(ADR 0017), so a new action revision needs no platform approval. Workflow configuration alone does not prove that publication or
 reconciliation succeeded.
 
 Before moving a publisher between repositories, merge and template-sync the
@@ -220,7 +220,7 @@ schema. Digest selection must retain the immutable digest schema, and optional
 application reconciliation must default on and preserve its deletion guard.
 Static OCI references remain supported; conditional application reconciliation
 still requires the same source schema and safeguards with that reference form.
-The starter uses the maintained publisher at its reviewed minimum version.
+Tenants still on the shared publisher keep it at its reviewed minimum version.
 Its portable guard rejects a return to the retired catalogue, movable refs,
 older versions and version comments that do not match the immutable commit.
 The Platform approval and verification policy must be deployed before a live
@@ -232,9 +232,9 @@ frame validated by the portable approval check. It instantiates the generic
 Tenant's exact own-release rule with a fixed sample repository and release tag,
 then compares that producer with the decoded rule. A shared-only default or an
 explicit shared-publisher revision cannot authorize this producer. Execution
-environment overrides and branch publication remain refused. This offline
-compatibility check neither switches the starter's publisher nor proves that a
-real release was signed, admitted or reconciled.
+environment overrides and branch publication remain refused. The starter ships
+this caller. This offline check does not prove that a real release was signed,
+admitted or reconciled.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
