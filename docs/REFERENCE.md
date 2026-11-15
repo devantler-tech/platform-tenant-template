@@ -227,6 +227,15 @@ The Platform approval and verification policy must be deployed before a live
 tenant adopts that caller. This compatibility check does not activate publishing
 or authorize a tenant's caller pin.
 
+The envelope check also accepts the minimal direct `actions/publish-app` caller
+frame validated by the portable approval check. It instantiates the generic
+Tenant's exact own-release rule with a fixed sample repository and release tag,
+then compares that producer with the decoded rule. A shared-only default or an
+explicit shared-publisher revision cannot authorize this producer. Execution
+environment overrides and branch publication remain refused. This offline
+compatibility check neither switches the starter's publisher nor proves that a
+real release was signed, admitted or reconciled.
+
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
 > name (`app-name: ${{ github.event.repository.name }}` in `cd.yaml`).
