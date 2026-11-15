@@ -16,7 +16,8 @@ to the repository name.
   appended to `.github/dependabot.yml` and its `## Stack` and `## Validation` text replaces the
   placeholders in `AGENTS.md`. The Go module becomes `github.com/devantler-tech/<name>`; the .NET
   solution, projects and namespace become the PascalCase form of `<name>`. `none` keeps the
-  placeholder job and Dockerfile for a stack you bring yourself.
+  placeholder job, and with `--tenancy` the placeholder Dockerfile, for a stack you bring yourself;
+  without `--tenancy` you add your own build files.
 - **Tenancy.** With `--tenancy` the application stays a platform tenant: `deploy/`, `cd.yaml`,
   the image's Dependabot entry and the CI jobs that guard the image and manifests stay, and
   `scripts/rename-placeholders.sh` renames `deploy/` (below). Without it, all of them are

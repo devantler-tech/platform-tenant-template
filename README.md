@@ -28,7 +28,7 @@ flowchart LR
 |---|---|
 | `go` | A Go `net/http` server with OpenFeature feature flags, table-driven tests, golangci-lint v2 and the shared Go validator in CI |
 | `dotnet` | An ASP.NET Core minimal API on .NET 11 with OpenFeature, xUnit v3 tests and warnings-as-errors analyzers, built and tested in CI |
-| `none` | A placeholder CI job and Dockerfile, for a stack you bring yourself, such as Node |
+| `none` | A placeholder CI job for a stack you bring yourself, such as Node; with `--tenancy` also a placeholder Dockerfile, otherwise you add your own build files |
 | `--tenancy` | `deploy/` Kustomize manifests, a signed image and manifests release on every `v*` tag, and CI that builds the image and renders `deploy/` before merge |
 
 Every application gets Conventional-Commit releases, Dependabot, agent instructions
