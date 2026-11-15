@@ -11,8 +11,9 @@ jobs:
   publish:
     name: Publish
     # Skipped in the template repo itself (it ships no app); runs in every tenant
-    # created from this template.
-    if: github.repository != 'devantler-tech/platform-tenant-template'
+    # created from this template. The template is matched by its repository ID,
+    # which survives the rename from platform-tenant-template to application-template.
+    if: github.repository_id != '1253884448'
     permissions:
       contents: read # checkout
       packages: write # push image + manifests OCI artifact

@@ -57,7 +57,8 @@ permissions: {}
 jobs:
   validate-scaffold:
     name: Validate Scaffold
-    if: github.repository == 'devantler-tech/platform-tenant-template'
+    # The template repository, matched by its ID so the guard survives renames.
+    if: github.repository_id == '1253884448'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout
@@ -87,7 +88,7 @@ jobs:
           workflow=.github/workflows/validate-scaffold.yaml
           expected_if=$(
             printf '%s' \
-              "github.repository == 'devantler-tech/platform-tenant-template'"
+              "github.repository_id == '1253884448'"
           )
           export expected_if
           # The drift reporter's conditions are pinned exactly: a widened job
@@ -96,7 +97,7 @@ jobs:
           expected_report_if=$(
             printf '%s' \
               "!cancelled()" \
-              " && github.repository == 'devantler-tech/platform-tenant-template'" \
+              " && github.repository_id == '1253884448'" \
               " && github.ref == 'refs/heads/main'" \
               " && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
           )
@@ -430,6 +431,12 @@ jobs:
         # it ships to every tenant). kubectl is preinstalled, so the test's
         # post-rename `kubectl kustomize` build assertion runs here too.
         run: sh scripts/rename-placeholders.test.sh
+      - name: 🧩 Validate the stack scaffold (scaffold.sh)
+        # Scaffold every stack with and without tenancy in throwaway copies and check
+        # what each leaves: no markers, the stack renamed, tenancy kept or removed,
+        # template-only files gone and kept out by .templatesyncignore. Validate
+        # Stacks then builds and runs the results.
+        run: sh scripts/scaffold.test.sh
       - name: 🤖 Validate scaffolded agent instructions
         # These files become tenant-owned immediately after creation, so a stale
         # trust or promotion rule cannot be repaired by template sync later.
@@ -486,7 +493,7 @@ jobs:
   # admission, just not in this offline gate.
   admissibility:
     name: Platform Admissibility
-    if: github.repository == 'devantler-tech/platform-tenant-template'
+    if: github.repository_id == '1253884448'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkouts
@@ -1051,7 +1058,7 @@ jobs:
   # stays template-only like the other scaffold gates.
   pod-security-admission:
     name: Pod Security and tenant RBAC
-    if: github.repository == 'devantler-tech/platform-tenant-template'
+    if: github.repository_id == '1253884448'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1091,7 +1098,7 @@ jobs:
     needs: [validate-scaffold, admissibility, pod-security-admission]
     if: >-
       !cancelled()
-      && github.repository == 'devantler-tech/platform-tenant-template'
+      && github.repository_id == '1253884448'
       && github.ref == 'refs/heads/main'
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest

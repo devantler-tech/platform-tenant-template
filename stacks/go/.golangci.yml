@@ -1,0 +1,50 @@
+version: "2"
+run:
+  allow-parallel-runners: true
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+    - swaggo
+linters:
+  default: all
+  enable:
+    - wsl_v5
+  disable:
+    - exhaustruct
+    # exhaustruct_v5 replaces exhaustruct in golangci-lint v2.14. Disabled for the same reason:
+    # requiring every field of standard-library structs such as http.Server adds noise, not safety.
+    - exhaustruct_v5
+    # Deprecated since golangci-lint v2.12.0; `default: all` already runs its
+    # replacement, gomodguard_v2, on releases that ship it. Disabling the old
+    # name keeps every v2 release working, since no release rejects it.
+    - gomodguard
+    - wsl
+  exclusions:
+    paths:
+      # Exclude auto-generated mock files from all linting rules
+      - ".*mocks.*\\.go$"
+      - ".*_mocks_.*\\.go$"
+  settings:
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
+    depguard:
+      rules:
+        main:
+          files:
+            - "$all"
+            - "!$test"
+          list-mode: strict
+          allow:
+            - $gostd
+            # Portable runtime flag API — the feature-flag-first delivery
+            # convention (see AGENTS.md ## Maintenance). Swap the provider for
+            # flagd / a managed backend in a real service; call sites are stdlib.
+            - github.com/open-feature/go-sdk
+            # The application's own packages. scripts/scaffold.sh renames this with the module.
+            - github.com/devantler-tech/app
