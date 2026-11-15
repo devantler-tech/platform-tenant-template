@@ -46,6 +46,8 @@ tenant_ignored() {
 
 [ -f "$portable_contract" ] ||
 	fail 'the portable workflow-caller pin contract is missing'
+[ -f "$repo_root/scripts/fixtures/own-publisher.yaml" ] ||
+	fail 'the direct publisher compatibility fixture is missing'
 grep -Fqx 'scripts/workflow-caller-contract.test.sh' "$template_sync_ignore" ||
 	fail 'the scaffold-only workflow-caller contract must stay tenant-ignored'
 if grep -Fqx 'scripts/workflow-caller-pin-contract.test.sh' "$template_sync_ignore"; then
@@ -77,6 +79,9 @@ validate_contract() {
 	reference_file=$5
 	ignore_file=$6
 	dependabot_file=$7
+	if tenant_ignored "$ignore_file" scripts/fixtures/own-publisher.yaml; then
+		fail 'the portable caller fixture must reach tenants through template sync'
+	fi
 
 	yq eval -e '.jobs.publish.uses | test("^devantler-tech/[.]github/[.]github/workflows/publish-app[.]yaml@[0-9a-f]{40}$")' \
 		"$cd_file" >/dev/null ||
@@ -280,6 +285,11 @@ run_mutation 'template-sync ignore-entry merge disabled' template-sync \
 	'.jobs."template-sync".with."merge-template-ignore-entries" = false'
 run_mutation 'template-sync ignore-entry merge removed' template-sync \
 	'del(.jobs."template-sync".with."merge-template-ignore-entries")'
+# The sed append address is literal; it must not expand as a shell variable.
+# shellcheck disable=SC2016
+run_mutation 'portable caller fixture excluded from template sync' ignore \
+	'$a\
+scripts/fixtures/own-publisher.yaml'
 run_mutation 'required scaffold invocation removed' validation \
 	'del(.jobs."validate-scaffold".steps[] | select(.run == "sh scripts/workflow-caller-contract.test.sh"))'
 run_mutation 'reference ownership table marker removed' reference \

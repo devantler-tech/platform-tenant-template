@@ -32,8 +32,61 @@ fail() {
 [ "$#" -eq 2 ] || fail 'usage: publish-pin-approved.sh <base-cd.yaml> <head-cd.yaml>'
 
 # One complete publisher identity, not just a SHA that could belong to another repository.
+publish_manifest_choice=$(cat <<'EXPRESSION'
+${{ hashFiles('deploy/base/deployment.yaml') != '' && 'base/deployment.yaml' || 'deployment.yaml' }}
+EXPRESSION
+)
+export publish_manifest_choice
+
 publish_identity() {
 	[ -f "$1" ] || fail "no cd.yaml at $1"
+	yq eval-all -e '[.] | length == 1' "$1" >/dev/null ||
+		fail "$1 must contain exactly one publisher document"
+	if yq eval -e '.jobs.publish | has("steps")' "$1" >/dev/null 2>&1; then
+		# A direct action signs as this repository, independently of the action's
+		# revision. Retain a minimal, tag-only, credential-free execution frame;
+		# the required caller-pin check binds its SHA to the catalogue release.
+		# Workflow-level env and defaults can also change the action's execution.
+		# shellcheck disable=SC2016
+		yq eval -e '
+			(keys - ["name", "on", "permissions", "jobs"] | length) == 0
+			and (.permissions | length) == 0
+			and (.["on"] | keys | join(",")) == "push"
+			and (.["on"].push | keys | join(",")) == "tags"
+			and (.["on"].push.tags | length) == 1
+			and .["on"].push.tags[0] == "v*"
+			and (.jobs | keys | join(",")) == "publish"
+			and (.jobs.publish | keys | sort | join(",")) == "concurrency,if,name,permissions,runs-on,steps,timeout-minutes"
+			and .jobs.publish.if == "github.repository_id != '\''1253884448'\''"
+			and .jobs.publish."runs-on" == "ubuntu-latest"
+			and .jobs.publish."timeout-minutes" == 60
+			and .jobs.publish.concurrency.group == "publish-${{ github.repository }}"
+			and .jobs.publish.concurrency."cancel-in-progress" == false
+			and (.jobs.publish.permissions | length) == 3
+			and .jobs.publish.permissions.contents == "read"
+			and .jobs.publish.permissions.packages == "write"
+			and .jobs.publish.permissions."id-token" == "write"
+			and (.jobs.publish.steps | length) == 3
+			and (.jobs.publish.steps[0] | keys | sort | join(",")) == "name,uses,with"
+			and (.jobs.publish.steps[0].uses | test("^step-security/harden-runner@[0-9a-f]{40}$"))
+			and (.jobs.publish.steps[0].with | length) == 1
+			and .jobs.publish.steps[0].with."egress-policy" == "audit"
+			and (.jobs.publish.steps[1] | keys | sort | join(",")) == "name,uses,with"
+			and (.jobs.publish.steps[1].uses | test("^actions/checkout@[0-9a-f]{40}$"))
+			and (.jobs.publish.steps[1].with | length) == 1
+			and .jobs.publish.steps[1].with."persist-credentials" == false
+			and (.jobs.publish.steps[2] | keys | sort | join(",")) == "id,name,uses,with"
+			and .jobs.publish.steps[2].id == "publish"
+			and (.jobs.publish.steps[2].uses | test("^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$"))
+			and (.jobs.publish.steps[2].with | keys | sort | join(",")) == "app-manifest,app-name"
+			and .jobs.publish.steps[2].with."app-name" == "${{ github.event.repository.name }}"
+			and (.jobs.publish.steps[2].with."app-manifest" == "base/deployment.yaml"
+				or .jobs.publish.steps[2].with."app-manifest" == "deployment.yaml"
+				or .jobs.publish.steps[2].with."app-manifest" == strenv(publish_manifest_choice))
+		' "$1" >/dev/null || fail "$1 does not retain the minimal own-release signing contract"
+		yq eval -r '.jobs.publish.steps[2].uses' "$1"
+		return
+	fi
 	uses=$(yq eval -r '.jobs.publish.uses // ""' "$1") ||
 		fail "could not read the publish-app.yaml pin from $1"
 	# Validate the whole reference first: a bare SHA, or another workflow pinned by SHA, is not a
@@ -50,6 +103,13 @@ publish_identity() {
 base_identity=$(publish_identity "$1")
 head_identity=$(publish_identity "$2")
 head_pin=${head_identity##*@}
+
+case "$head_identity" in
+devantler-tech/.github/actions/publish-app@*)
+	printf 'Publisher signs as the own release workflow; shared-workflow revision approval does not apply.\n'
+	exit 0
+	;;
+esac
 
 if [ "$base_identity" = "$head_identity" ]; then
 	printf 'publish-app.yaml pin unchanged at %s; nothing to check.\n' "$head_pin"

@@ -164,6 +164,57 @@ expect 'canonical columns are bound by header, not position' 0 'is approved' "$w
 rm "$work/canonical.tsv"
 expect 'an unreadable canonical set fails closed' 1 'could not read' "$work/ok.tsv" "$candidate" example-tenant .github
 
+# Exercise the direct caller contract, including the old-to-own identity transition.
+# Shared-publisher approval records remain mandatory for every legacy case above.
+cp "$script_dir/fixtures/own-publisher.yaml" "$work/own.yaml"
+cd_file base.yaml "$main_pin" .github
+status=0
+output=$(PUBLISH_PIN_CONSUMER=example-tenant PUBLISH_PIN_APPROVED_SET="$work/missing.tsv" \
+	sh "$subject" "$work/base.yaml" "$work/own.yaml" 2>&1) || status=$?
+if [ "$status" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'own release workflow'; then
+	pass=$((pass + 1))
+else
+	printf 'FAIL: direct caller transition (exit %s)\n%s\n' "$status" "$output" >&2
+	failures=$((failures + 1))
+fi
+for manifest in deployment.yaml base/deployment.yaml; do
+	MANIFEST=$manifest yq eval '.jobs.publish.steps[2].with."app-manifest" = strenv(MANIFEST)' \
+		"$work/own.yaml" >"$work/fixed-path.yaml"
+	if sh "$subject" "$work/base.yaml" "$work/fixed-path.yaml" >"$work/result" 2>&1; then
+		pass=$((pass + 1))
+	else
+		printf 'FAIL: supported manifest path refused: %s\n' "$manifest" >&2
+		cat "$work/result" >&2
+		failures=$((failures + 1))
+	fi
+done
+for mutation in \
+	'.env.BASH_ENV = "publisher-hook.sh"' \
+	'.defaults.run.shell = "bash -e {0}"' \
+	'.jobs.publish.steps[2].uses = "other-owner/repo/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
+	'.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/publish-app@main"' \
+	'.jobs.publish.steps[1].with."persist-credentials" = true' \
+	'.jobs.publish.steps[2].if = "false"' \
+	'.jobs.publish.steps[2].with."app-manifest" = "other/deployment.yaml"' \
+	'.jobs.publish.permissions.issues = "write"' \
+	'.jobs.publish.steps += [.jobs.publish.steps[2]]' \
+	'.jobs.shadow = .jobs.publish' \
+	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'; do
+	yq eval "$mutation" "$work/own.yaml" >"$work/unsafe.yaml"
+	if sh "$subject" "$work/base.yaml" "$work/unsafe.yaml" >"$work/result" 2>&1; then
+		printf 'FAIL: unsafe own caller accepted: %s\n' "$mutation" >&2
+		failures=$((failures + 1))
+	else
+		if grep -Fq 'minimal own-release signing contract' "$work/result"; then
+			pass=$((pass + 1))
+		else
+			printf 'FAIL: own caller refused for the wrong reason: %s\n' "$mutation" >&2
+			cat "$work/result" >&2
+			failures=$((failures + 1))
+		fi
+	fi
+done
+
 printf 'publish-pin-approved: %s passed, %s failed\n' "$pass" "$failures"
 completed=1
 [ "$failures" -eq 0 ]

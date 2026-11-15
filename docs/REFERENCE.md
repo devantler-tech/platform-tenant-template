@@ -92,6 +92,7 @@ the template excludes, add the line `!<entry>` to your list.
 | `CLAUDE.md` | `@AGENTS.md` shim |
 | `docs/REFERENCE.md` | This reference |
 | `scripts/workflow-caller-pin-contract.test.sh` (*tenant*) | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
+| `scripts/fixtures/own-publisher.yaml` (*tenant*) | Direct-action compatibility input used by the portable caller and approval checks; sync it with those checks |
 | `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` (*tenant*) | The check a tenant's required CI runs to refuse a changed publisher identity until Platform approves it for that tenant. Legacy revisions use the existing approved set; maintained publishers require an exact canonical approval. The default `ci.yaml` runs the `publish-pin-approved` job and includes it in `ci-required-checks`; this unregistered template runs its tests only. Older tenants that own `ci.yaml` add the job themselves |
 | `zizmor.yml` | GitHub Actions pinning policy enforced by the security scan |
 
@@ -229,6 +230,20 @@ or authorize a tenant's caller pin.
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
 > name (`app-name: ${{ github.event.repository.name }}` in `cd.yaml`).
+
+## Staging a publisher migration
+
+Existing tenants keep their own `deploy/` tree and CI workflow. Land the updated portable caller
+check, approval check, their tests and `scripts/fixtures/own-publisher.yaml` while keeping the
+current publisher unchanged. The required approval job executes the checker from its base revision,
+so the guard update must merge in the consumer before a later PR changes its publishing job.
+
+After that consumer’s base contains the updated checks, switch its publisher in a separate PR.
+Keep support for both `deploy/deployment.yaml` and `deploy/base/deployment.yaml`: template sync does
+not move tenant-owned manifests. The prepared direct-action contract accepts either fixed path or
+the exact file-selection expression in the compatibility fixture. The existing reusable-workflow
+caller still requires its original Platform approval; the new direct caller retains immutable pins,
+a minimal signing job, credential-free checkout and an unskippable publisher.
 
 ## Validate locally
 

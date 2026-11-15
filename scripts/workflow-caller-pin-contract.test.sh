@@ -53,8 +53,21 @@ validate_pins() {
  cd_file=$1
  release_file=$2
  template_sync_file=$3
- yq eval -e '.jobs.publish.uses | test("^devantler-tech/[.]github/[.]github/workflows/publish-app[.]yaml@[0-9a-f]{40}$")' "$cd_file" >/dev/null ||
-  fail 'the publish caller must pin canonical publish-app.yaml to a commit SHA'
+ if yq eval -e '.jobs.publish | has("uses")' "$cd_file" >/dev/null 2>&1; then
+  yq eval -e '.jobs.publish | has("steps") | not' "$cd_file" >/dev/null ||
+   fail 'the publish caller must pin exactly one publisher'
+  cd_selector='.jobs.publish.uses'
+  cd_pattern='^devantler-tech/[.]github/[.]github/workflows/publish-app[.]yaml@[0-9a-f]{40}$'
+  cd_floor=v7.23.0
+ else
+  yq eval -e '[.jobs.publish.steps[] | select(.id == "publish")] | length == 1' "$cd_file" >/dev/null ||
+   fail 'the publish caller must pin exactly one publisher'
+  cd_selector='(.jobs.publish.steps[] | select(.id == "publish")).uses'
+  cd_pattern='^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$'
+  cd_floor=v21.6.2
+ fi
+ PUB_PATTERN=$cd_pattern yq eval -e "$cd_selector | test(strenv(PUB_PATTERN))" "$cd_file" >/dev/null ||
+  fail 'the publish caller must pin the canonical publisher to a commit SHA'
  yq eval -e '.jobs.release.uses | test("^devantler-tech/\\.github/\\.github/workflows/create-release\\.yaml@[0-9a-f]{40}$")' "$release_file" >/dev/null ||
   fail 'the release caller must pin canonical create-release.yaml to a commit SHA'
  yq eval -e '.jobs."template-sync".uses | test("^devantler-tech/\\.github/\\.github/workflows/template-sync\\.yaml@[0-9a-f]{40}$")' "$template_sync_file" >/dev/null ||
@@ -63,15 +76,15 @@ validate_pins() {
  pinned_ref_of() { yq eval -r "$2 | sub(\".*@\"; \"\")" "$1"; }
  # Read the human version comment bound to that immutable commit.
  pinned_version_of() { yq eval -r "$2 | line_comment" "$1"; }
- cd_ref=$(pinned_ref_of "$cd_file" '.jobs.publish.uses')
+ cd_ref=$(pinned_ref_of "$cd_file" "$cd_selector")
  release_ref=$(pinned_ref_of "$release_file" '.jobs.release.uses')
  sync_ref=$(pinned_ref_of "$template_sync_file" '.jobs."template-sync".uses')
  [ "$release_ref" = "$sync_ref" ] || fail 'canonical release and template-sync callers must pin the same commit'
- cd_version=$(pinned_version_of "$cd_file" '.jobs.publish.uses')
+ cd_version=$(pinned_version_of "$cd_file" "$cd_selector")
  release_version=$(pinned_version_of "$release_file" '.jobs.release.uses')
  sync_version=$(pinned_version_of "$template_sync_file" '.jobs."template-sync".uses')
  [ "$release_version" = "$sync_version" ] || fail 'canonical release and template-sync callers must carry the same version comment'
- validate_version .github "$cd_ref" "$cd_version" v7.23.0
+ validate_version .github "$cd_ref" "$cd_version" "$cd_floor"
  validate_version .github "$release_ref" "$release_version" v6.1.0
  # The reviewed canonical floor enables alignment by default. Keep the
  # temporary rollout input out of tenants so its declaration can be retired.
@@ -87,9 +100,9 @@ validate_pins "$cd_workflow" "$release_workflow" "$template_sync_workflow"
 mutation_dir=$(mktemp -d)
 trap 'rm -rf "$mutation_dir"' EXIT
 mutations_run=0
-# Start each negative control with independent copies of the real callers.
+# Start each control with the direct-caller fixture and real release/sync callers.
 reset_mutation() {
- cp "$cd_workflow" "$mutation_dir/cd.yaml"
+ cp "$script_dir/fixtures/own-publisher.yaml" "$mutation_dir/cd.yaml"
  cp "$release_workflow" "$mutation_dir/release.yaml"
  cp "$template_sync_workflow" "$mutation_dir/template-sync.yaml"
 }
@@ -112,15 +125,25 @@ single_mutation() {
  mutate "$2" "$3"
  rejected "$1" "$4"
 }
-single_mutation 'moving publisher' cd '.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@main"' 'publish caller must pin'
-single_mutation 'legacy publisher rollback' cd '.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328"' 'publish caller must pin'
+# Existing tenants can receive the portable check before changing their caller.
+# Verify that the retained legacy arm still checks a real, tagged publisher.
+reset_mutation
+validate_pins "$mutation_dir/cd.yaml" "$mutation_dir/release.yaml" "$mutation_dir/template-sync.yaml"
+yq eval '
+ del(.jobs.publish.steps, .jobs.publish."runs-on", .jobs.publish."timeout-minutes", .jobs.publish.concurrency)
+ | .jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"
+ | .jobs.publish.uses line_comment = "v19.0.5"
+' "$mutation_dir/cd.yaml" >"$mutation_dir/legacy.yaml"
+validate_pins "$mutation_dir/legacy.yaml" "$mutation_dir/release.yaml" "$mutation_dir/template-sync.yaml"
+single_mutation 'moving publisher' cd '.jobs.publish.steps[2].uses = "devantler-tech/.github/actions/publish-app@main"' 'publish caller must pin'
+single_mutation 'legacy publisher rollback' cd '.jobs.publish.steps[2].uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328"' 'publish caller must pin'
 single_mutation 'moving release' release '.jobs.release.uses = "devantler-tech/.github/.github/workflows/create-release.yaml@main"' 'release caller must pin'
 single_mutation 'short sync SHA' template-sync '.jobs."template-sync".uses = "devantler-tech/.github/.github/workflows/template-sync.yaml@1234567"' 'template-sync caller must pin'
 single_mutation 'legacy release rollback' release '.jobs.release.uses = "devantler-tech/actions/.github/workflows/create-release.yaml@df7fd4f83edade31c121a9de563d9a7b9b1f900d"' 'release caller must pin'
 single_mutation 'wrong sync path' template-sync '.jobs."template-sync".uses |= sub("template-sync"; "publish-app")' 'template-sync caller must pin'
 single_mutation 'canonical SHA divergence' release '.jobs.release.uses |= sub("@.*"; "@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")' 'must pin the same commit'
 single_mutation 'canonical comment divergence' release '.jobs.release.uses line_comment = "v6.0.6"' 'must carry the same version comment'
-single_mutation 'publisher leading-zero version' cd '.jobs.publish.uses line_comment = "v07.23.0"' 'version comment of the form'
+single_mutation 'publisher leading-zero version' cd '.jobs.publish.steps[2].uses line_comment = "v021.6.2"' 'version comment of the form'
 single_mutation 'consumer npm alignment disabled' release '.jobs.release.with."align-npm-with-consumer-contract" = false' 'use default consumer npm alignment'
 single_mutation 'redundant consumer npm alignment opt-in' release '.jobs.release.with."align-npm-with-consumer-contract" = true' 'use default consumer npm alignment'
 # Change a whole catalogue family to test its version floor and tag identity.
@@ -130,7 +153,7 @@ repin_mutation() {
  ref=$3
  version=$4
  if [ "$family" = publish ]; then
-  mutate cd ".jobs.publish.uses = \"devantler-tech/.github/.github/workflows/publish-app.yaml@$ref\" | .jobs.publish.uses line_comment = \"$version\""
+  mutate cd ".jobs.publish.steps[2].uses = \"devantler-tech/.github/actions/publish-app@$ref\" | .jobs.publish.steps[2].uses line_comment = \"$version\""
  else
   mutate release ".jobs.release.uses = \"devantler-tech/.github/.github/workflows/create-release.yaml@$ref\" | .jobs.release.uses line_comment = \"$version\""
   mutate template-sync ".jobs.\"template-sync\".uses = \"devantler-tech/.github/.github/workflows/template-sync.yaml@$ref\" | .jobs.\"template-sync\".uses line_comment = \"$version\""
@@ -138,7 +161,7 @@ repin_mutation() {
  rejected "$1" "$5"
 }
 repin_mutation 'publisher below floor' publish 77cfa9cfc5514ebe1429f64e681afd181cf4515d v7.22.0 'older than the reviewed floor'
-repin_mutation 'publisher forged version' publish 77cfa9cfc5514ebe1429f64e681afd181cf4515d v7.23.0 'the comment must name the tag'
+repin_mutation 'publisher forged version' publish 77cfa9cfc5514ebe1429f64e681afd181cf4515d v21.6.2 'the comment must name the tag'
 repin_mutation 'canonical below floor' .github 4b00bd6698af033dc472b39a7e609173fe38dfb1 v6.0.6 'older than the reviewed floor'
 repin_mutation 'canonical forged version' .github 4b00bd6698af033dc472b39a7e609173fe38dfb1 v6.1.0 'the comment must name the tag'
 repin_mutation 'canonical leading-zero version' .github e271b7ff25d4ce97b067612e7ba0c5d657b6a17a v6.01.0 'version comment of the form'
