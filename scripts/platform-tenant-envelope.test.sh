@@ -17,6 +17,7 @@ expected_oidc_issuer='^https://token\.actions\.githubusercontent\.com$'
 # maintained publisher must name one or two literal reviewed commits. The
 # starter's complete pinned caller identity must match this rule.
 publisher_identity=''
+publisher_own_repository=''
 # A manually declared tenant's own OCIRepository is narrower: platform writes an
 # explicit alternation of its approved publish-app.yaml revisions (full 40-hex SHAs)
 # from scripts/publish-workflow-approved-revisions.tsv. Which SHAs is platform's
@@ -150,6 +151,8 @@ generic_default_subject() (
 	subject=$1
 	rgd=$2
 	publisher_revision=${3:-}
+	own_repository=${4:-}
+	own_subject=''
 	conditional_subject=0
 	# shellcheck disable=SC2016
 	prefix='${schema.spec.source.publisherRevision == "" ? '
@@ -185,6 +188,10 @@ generic_default_subject() (
 					# still bounds its revisions and the starter caller still matches.
 					case "$shared" in '\.github/\.github/workflows/publish-app\.yaml@'*) ;; *) exit 1 ;; esac
 					subject='^https://github\.com/devantler-tech/'"$shared"'$'
+					if [ -n "$own_repository" ]; then
+						validate_dns_label "$own_repository" || exit 1
+						own_subject="$group_prefix$shared|$own_repository$own_release_tail)\$"
+					fi
 					;;
 				*)
 					subject=$(decode_cel_string "$encoded") || exit 1
@@ -197,6 +204,8 @@ generic_default_subject() (
 		[ "$conditional_subject" -eq 1 ] || exit 1
 		validate_revision_group "$publisher_revision" 1 || exit 1
 		subject='^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@'"$publisher_revision"'$'
+	elif [ -n "$own_subject" ]; then
+		subject=$own_subject
 	fi
 	printf '%s\n' "$subject"
 )
@@ -204,9 +213,22 @@ generic_default_subject() (
 # Bind the tag-only publishing job to its immutable workflow and minimal authority.
 validate_publish_workflow() {
 	workflow_file=$1
+	publisher_own_repository=''
 	[ -f "$workflow_file" ] || fail "tenant publish workflow is missing: $workflow_file"
 	yq eval-all -e '[.] | length == 1' "$workflow_file" >/dev/null ||
 		fail "tenant publish workflow must contain exactly one YAML document"
+	if yq eval -e '.jobs.publish | has("steps")' "$workflow_file" >/dev/null 2>&1; then
+		# Reuse the portable validator's tag-only, SHA-pinned execution frame.
+		# Its caller-pin companion separately verifies the catalogue tag binding.
+		sh "$script_dir/publish-pin-approved.sh" "$workflow_file" "$workflow_file" >/dev/null ||
+			fail "tenant publish workflow no longer has the minimal own-release signing contract"
+		# Instantiate the dynamic Tenant name with one fixed probe name. This
+		# exercises the decoded matcher, without evaluating CEL or claiming a
+		# real release was signed, admitted or reconciled.
+		publisher_own_repository=tenant-envelope-probe
+		publisher_identity=https://github.com/devantler-tech/tenant-envelope-probe/.github/workflows/cd.yaml@refs/tags/v1.2.3
+		return
+	fi
 
 	# The tag-only tenant job is the producer identity Platform's OCIRepository
 	# accepts. Keep its authority both minimal and immutable.
@@ -440,7 +462,7 @@ validate_platform() {
 		and $kustomizationSops.spec.targetNamespace == "${tenantNamespace.metadata.name}")
 	' "$rgd" >/dev/null || fail "Platform KRO Tenant no longer provides the required namespace, RBAC, and Flux envelope"
 	generic_subject=$(yq eval -r '.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject' "$rgd")
-	generic_subject=$(generic_default_subject "$generic_subject" "$rgd" "${3:-}") ||
+	generic_subject=$(generic_default_subject "$generic_subject" "$rgd" "${3:-}" "$publisher_own_repository") ||
 		fail "Platform KRO Tenant OCI subject is not an anchored app-publisher rule"
 	[ -n "$publisher_identity" ] || fail "starter publisher must be validated before its Platform consumer"
 	printf '%s\n' "$publisher_identity" | grep -Eq -- "$generic_subject" ||
@@ -832,6 +854,16 @@ run_producer_control() {
 	CALLER_CONTROL=$control_caller yq eval '.jobs.publish.uses = strenv(CALLER_CONTROL)' \
 		"$publish_workflow" > "$mutation_dir/producer-cd.yaml"
 	case "${5:-}" in
+		own-publisher|own-publisher-env|own-publisher-branch)
+			cp "$script_dir/fixtures/own-publisher.yaml" "$mutation_dir/producer-cd.yaml"
+			case "$5" in
+				own-publisher-env) expression='.env.PATH = "/untrusted"' ;;
+				own-publisher-branch) expression='.["on"].push.branches = ["main"]' ;;
+				*) expression='.' ;;
+			esac
+			yq eval "$expression" "$mutation_dir/producer-cd.yaml" > "$mutation_dir/producer-cd-mutant.yaml"
+			mv "$mutation_dir/producer-cd-mutant.yaml" "$mutation_dir/producer-cd.yaml"
+			;;
 		static-ref)
 			yq eval '(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"semver": ">=1.0.0"}' \
 				"$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
@@ -918,6 +950,20 @@ control_own_shared=$(printf '%s' "$control_own_shared_text" | jq -Rs .)
 control_own_shared_unseparated=${control_own_shared_text%'|'}
 control_own_release=$(printf '%s' "${control_own_tail})\$" | jq -Rs .)
 control_own_default=$control_own_shared$control_own_name_expression$control_own_release
+run_producer_control 'own-release default accepts the direct publisher' \
+	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
+	"$control_maintained_caller" accept own-publisher
+run_producer_control 'shared-only default rejects the direct publisher' \
+	"$control_conditional_subject" "$control_maintained_caller" reject own-publisher
+run_producer_control 'explicit shared revision cannot authorize the direct publisher' \
+	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
+	"$control_maintained_caller" reject own-publisher "$control_b"
+run_producer_control 'own-release producer rejects an execution environment override' \
+	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
+	"$control_maintained_caller" reject own-publisher-env
+run_producer_control 'own-release producer rejects branch publication' \
+	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
+	"$control_maintained_caller" reject own-publisher-branch
 run_producer_control 'own-release default accepts its approved maintained caller' \
 	"$control_conditional_prefix$control_own_default$control_conditional_suffix" "$control_maintained_caller" accept
 run_producer_control 'own-release default rejects an unapproved maintained revision' \
