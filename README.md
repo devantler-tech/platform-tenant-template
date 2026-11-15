@@ -30,7 +30,7 @@ flowchart LR
 | `go` | A Go `net/http` server with OpenFeature feature flags, table-driven tests, golangci-lint v2 and the shared Go validator in CI |
 | `dotnet` | An ASP.NET Core minimal API on .NET 11 with OpenFeature, xUnit v3 tests and warnings-as-errors analyzers, built and tested in CI |
 | `svelte` | A SvelteKit 3 and Svelte 5 app on Node 26 with `adapter-node`, OpenFeature, Vitest, svelte-check and ESLint |
-| `none` | A placeholder CI job and Dockerfile, for a stack you bring yourself |
+| `none` | A placeholder CI job for a stack you bring yourself; with `--tenancy` also a placeholder Dockerfile, otherwise you add your own build files |
 | `--tenancy` | `deploy/` Kustomize manifests, a signed image and manifests release on every `v*` tag, and CI that builds the image and renders `deploy/` before merge |
 
 Every stack serves a placeholder page at `GET /` on port 3000, which is where the tenant's probes

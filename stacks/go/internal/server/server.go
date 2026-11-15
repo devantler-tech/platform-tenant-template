@@ -22,6 +22,9 @@ const (
 	// readHeaderTimeout bounds how long a client may take to send request
 	// headers, so a slow client cannot hold a connection open indefinitely.
 	readHeaderTimeout = 5 * time.Second
+	// readTimeout bounds reading a whole request, body included, so a client cannot
+	// hold a connection by withholding a body it announced.
+	readTimeout = 15 * time.Second
 	// shutdownTimeout bounds how long in-flight requests may finish after the
 	// process is asked to stop. Keep it below the pod's termination grace period.
 	shutdownTimeout = 10 * time.Second
@@ -49,6 +52,7 @@ func Run(ctx context.Context, addr string, handler http.Handler) error {
 		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
 	}
 
 	serveErr := make(chan error, 1)

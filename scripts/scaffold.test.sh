@@ -170,6 +170,7 @@ check_dotnet() {
 	grep -q 'ExampleFeature' "$dir/src/DemoApp/FeatureFlags.cs" ||
 		fail "$label: the rename rewrote an identifier that only contains the placeholder"
 	grep -q '^namespace DemoApp;' "$dir/src/DemoApp/HomePage.cs" || fail "$label: the namespace was not renamed"
+	grep -q '`src/DemoApp`' "$dir/AGENTS.md" || fail "$label: AGENTS.md still names the placeholder project"
 	if [ -f "$dir/Dockerfile" ]; then
 		grep -q '"DemoApp.dll"' "$dir/Dockerfile" || fail "$label: the Dockerfile runs the placeholder assembly"
 	fi

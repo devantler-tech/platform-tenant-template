@@ -208,7 +208,7 @@ else
 		# The file list holds only paths this script created, none with spaces.
 		# shellcheck disable=SC2046
 		substitute "s/Example\\([^A-Za-z0-9_]\\)/$project\\1/g; s/Example\$/$project/; s#<title>app</title>#<title>$name</title>#" \
-			"$project.slnx" Dockerfile $(cat "$work/dotnet-files")
+			"$project.slnx" Dockerfile AGENTS.md $(cat "$work/dotnet-files")
 		;;
 	svelte)
 		substitute "s#\"name\": \"app\"#\"name\": \"$name\"#; s#<title>app</title>#<title>$name</title>#; s#flagDomain = 'app'#flagDomain = '$name'#" \

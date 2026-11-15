@@ -16,7 +16,8 @@ to the repository name.
   appended to `.github/dependabot.yml` and its `## Stack` and `## Validation` text replaces the
   placeholders in `AGENTS.md`. The Go module becomes `github.com/devantler-tech/<name>`; the .NET
   solution, projects and namespace become the PascalCase form of `<name>`; the SvelteKit package
-  becomes `<name>`. `none` keeps the placeholder job and Dockerfile for a stack you bring yourself.
+  becomes `<name>`. `none` keeps the placeholder job, and with `--tenancy` the placeholder
+  Dockerfile, for a stack you bring yourself; without `--tenancy` you add your own build files.
   Every stack except Go keeps the `lint` job, which calls the shared MegaLinter workflow; a Go
   application drops it because the shared Go validator already runs MegaLinter.
 - **Tenancy.** With `--tenancy` the application stays a platform tenant: `deploy/`, `cd.yaml`,
