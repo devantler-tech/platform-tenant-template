@@ -29,7 +29,9 @@ jobs:
   # JSON. Go applications drop this job: the shared Go validator lints them.
   lint:
     name: Lint
-    uses: ./.github/workflows/lint.yaml
+    # GitHub's `$/` self-repository form fails actionlint until it supports it
+    # (rhysd/actionlint#711); switch then.
+    uses: ./.github/workflows/lint.yaml # zizmor: ignore[self-repository]
     permissions:
       contents: read
   # lint:end
