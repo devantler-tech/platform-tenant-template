@@ -21,7 +21,7 @@ validate_contract() {
 	[ -f "$runtime_file" ] || fail "Pod Security admission runtime is missing"
 
 	expected_if=$(printf '%s' \
-		"github.repository == 'devantler-tech/platform-tenant-template'")
+		"github.repository_id == '1253884448'")
 	export expected_if
 	# The yq program is deliberately literal; only strenv(expected_if) supplies data.
 	# shellcheck disable=SC2016

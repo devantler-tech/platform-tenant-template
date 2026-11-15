@@ -1,0 +1,9 @@
+.git
+.github
+.svelte-kit
+build
+deploy
+docs
+node_modules
+scripts
+*.md

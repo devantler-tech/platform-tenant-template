@@ -1,0 +1,22 @@
+# The Go stack's CI job. scripts/scaffold.sh copies the `stack` job below into
+# .github/workflows/ci.yaml in place of the placeholder job. This file is never
+# a workflow of its own: it lives here so Dependabot keeps its pins current.
+name: Go stack job
+on: workflow_call
+permissions: {}
+jobs:
+  stack:
+    name: Go
+    # The shared validator builds, tests, lints, scans and measures coverage.
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
+    permissions:
+      contents: read
+      pull-requests: write # lint summaries; no branch-writing token on candidate runners
+      issues: write # lint summaries
+      code-quality: write # coverage upload
+    with:
+      pr-owner: ${{ github.event.pull_request.user.login }}
+      # A repository outside devantler-tech needs no App key for validation.
+      apply-signed-fixes: ${{ github.repository_owner == 'devantler-tech' }}
+    secrets:
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}

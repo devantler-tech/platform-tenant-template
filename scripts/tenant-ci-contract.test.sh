@@ -128,8 +128,16 @@ validate_contract() {
 			(.run // "") == "kubectl kustomize deploy/ >/dev/null && kubectl kustomize deploy/dev >/dev/null"
 		)] | length == 1
 	'
-	assert_ci "required-check aggregate must depend on all four jobs exactly" \
-		'(.jobs."ci-required-checks".needs | join(",")) == "workflow-caller-pins,example,delivery-inputs,publish-pin-approved"'
+	# The aggregate consumes `needs.*.result`, so `needs` alone decides what is checked: it must
+	# name every other job exactly once, the tenant delivery jobs among them.
+	assert_ci "required-check aggregate must depend on every other job exactly once" '
+		((.jobs."ci-required-checks".needs | type) == "!!seq")
+		and ((.jobs."ci-required-checks".needs | unique | length) == (.jobs."ci-required-checks".needs | length))
+		and ((.jobs."ci-required-checks".needs | sort | join(",")) == ([.jobs | keys | .[] | select(. != "ci-required-checks")] | sort | join(",")))
+	'
+	assert_ci "required-check aggregate must depend on the tenant delivery jobs" '
+		[.jobs."ci-required-checks".needs[] | select(. == "workflow-caller-pins" or . == "delivery-inputs" or . == "publish-pin-approved")] | length == 3
+	'
 	# shellcheck disable=SC2016
 	assert_ci "required-check aggregate must run after every result" \
 		'.jobs."ci-required-checks".if == "${{ always() }}"'
@@ -149,7 +157,7 @@ validate_contract() {
 	assert_ci "required-check aggregate must reject non-success results" '
 		[.jobs."ci-required-checks".steps[] | select(
 			.name == "Reject incomplete CI jobs"
-			and .if == "${{ needs.workflow-caller-pins.result != '\''success'\'' || needs.example.result != '\''success'\'' || needs.delivery-inputs.result != '\''success'\'' || needs.publish-pin-approved.result != '\''success'\'' }}"
+			and .if == "${{ contains(needs.*.result, '\''failure'\'') || contains(needs.*.result, '\''cancelled'\'') || contains(needs.*.result, '\''skipped'\'') }}"
 			and .run == "exit 1"
 			and .shell == "bash"
 			and ((keys | sort | join(",")) == "if,name,run,shell")
@@ -160,7 +168,7 @@ validate_contract() {
 		[.jobs."ci-required-checks".steps[] | select(
 			(.uses | test("^devantler-tech/\\.github/actions/aggregate-job-checks@[0-9a-f]{40}$"))
 			and .id == "ci-checks"
-			and .with."job-results" == "${{ needs.example.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }} ${{ needs.publish-pin-approved.result }}"
+			and .with."job-results" == "${{ join(needs.*.result, '\'' '\'') }}"
 			and .with."check-workflow-startup" == "true"
 			and ((keys | sort | join(",")) == "id,name,uses,with")
 			and ((.with | keys | sort | join(",")) == "check-workflow-startup,job-results")
@@ -202,7 +210,7 @@ validate_contract() {
 	# shellcheck disable=SC2016
 	assert_ci "publish-pin check must run the base branch copy in every tenant" '
 		(.jobs."publish-pin-approved".steps[3] | keys | sort | join(",")) == "env,if,name,run"
-		and .jobs."publish-pin-approved".steps[3].if == "github.repository != '\''devantler-tech/platform-tenant-template'\''"
+		and .jobs."publish-pin-approved".steps[3].if == "github.repository_id != '\''1253884448'\''"
 		and .jobs."publish-pin-approved".steps[3].env.BASE_SHA == "${{ github.event.pull_request.base.sha }}"
 		and (.jobs."publish-pin-approved".steps[3].run | contains("if [ -z \"${BASE_SHA}\" ]; then"))
 		and (.jobs."publish-pin-approved".steps[3].run | contains("git show \"${BASE_SHA}:scripts/publish-pin-approved.sh\" >\"${RUNNER_TEMP}/publish-pin-approved.sh\""))
@@ -365,13 +373,22 @@ run_mutation "dev overlay render dropped" \
 run_mutation "job permissions broadened" \
 	'.jobs."delivery-inputs".permissions.packages = "write"'
 run_mutation "delivery dependency removed from aggregate" \
-	'.jobs."ci-required-checks".needs = ["example"]'
+	'.jobs."ci-required-checks".needs = ["stack"]'
 run_mutation "delivery dependency replaced with duplicate" \
-	'.jobs."ci-required-checks".needs = ["example", "example"]'
+	'.jobs."ci-required-checks".needs = ["stack", "workflow-caller-pins", "publish-pin-approved", "stack"]'
+run_mutation "dependency listed twice" \
+	'.jobs."ci-required-checks".needs += ["stack"]' '' '' '' '' '' \
+	'depend on every other job exactly once'
 run_mutation "workflow caller pin dependency removed from aggregate" \
-	'.jobs."ci-required-checks".needs = ["example", "delivery-inputs", "publish-pin-approved"]'
+	'.jobs."ci-required-checks".needs = ["stack", "delivery-inputs", "publish-pin-approved"]'
 run_mutation "publish-pin dependency removed from aggregate" \
-	'.jobs."ci-required-checks".needs = ["workflow-caller-pins", "example", "delivery-inputs"]'
+	'.jobs."ci-required-checks".needs = ["workflow-caller-pins", "stack", "delivery-inputs"]'
+run_mutation "stack dependency removed from aggregate" \
+	'.jobs."ci-required-checks".needs = ["workflow-caller-pins", "delivery-inputs", "publish-pin-approved"]' '' '' '' '' '' \
+	'depend on every other job exactly once'
+run_mutation "new job left out of the aggregate" \
+	'.jobs."unaggregated-check" = {"name": "Unaggregated check", "runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}' '' '' '' '' '' \
+	'depend on every other job exactly once'
 run_mutation "publish-pin job removed" \
 	'del(.jobs."publish-pin-approved")'
 run_mutation "publish-pin check step removed" \
@@ -381,7 +398,7 @@ run_mutation "publish-pin check tests removed" \
 run_mutation "publish-pin check skipped in every repository" \
 	'.jobs."publish-pin-approved".steps[3].if = "false"'
 run_mutation "publish-pin check skipped in a tenant" \
-	'.jobs."publish-pin-approved".steps[3].if = "github.repository == '\''devantler-tech/platform-tenant-template'\''"'
+	'.jobs."publish-pin-approved".steps[3].if = "github.repository_id == '\''1253884448'\''"'
 run_mutation "publish-pin check judged by the head copy" \
 	'.jobs."publish-pin-approved".steps[3].run = "sh scripts/publish-pin-approved.sh base.yaml .github/workflows/cd.yaml"'
 # shellcheck disable=SC2016
@@ -395,20 +412,20 @@ run_mutation "publish-pin job made conditional" \
 	'.jobs."publish-pin-approved".if = "github.actor == '\''devantler'\''"'
 # shellcheck disable=SC2016
 run_mutation "publish-pin result removed from aggregate" \
-	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.example.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }}"'
+	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.stack.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }}"'
 # shellcheck disable=SC2016
 run_mutation "publish-pin result guard removed" \
-	'.jobs."ci-required-checks".steps[1].if = "${{ needs.workflow-caller-pins.result != '\''success'\'' || needs.example.result != '\''success'\'' || needs.delivery-inputs.result != '\''success'\'' }}"'
+	'.jobs."ci-required-checks".steps[1].if = "${{ contains(needs.*.result, '\''failure'\'') || contains(needs.*.result, '\''cancelled'\'') }}"'
 # The GitHub expression is mutation data, not a shell expansion.
 # shellcheck disable=SC2016
 run_mutation "delivery result removed from aggregate" \
-	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.example.result }}"'
+	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.stack.result }}"'
 # shellcheck disable=SC2016
 run_mutation "workflow caller pin result removed from aggregate" \
-	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.example.result }} ${{ needs.delivery-inputs.result }}"'
+	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.stack.result }} ${{ needs.delivery-inputs.result }}"'
 # shellcheck disable=SC2016
 run_mutation "delivery results coerced before aggregation" \
-	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.example.result == '\''success'\'' }} ${{ needs.delivery-inputs.result == '\''success'\'' }}"'
+	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ contains(needs.*.result, '\''success'\'') }}"'
 run_mutation "aggregate action allowed to fail" \
 	'.jobs."ci-required-checks".steps[0]."continue-on-error" = true'
 run_mutation "required-check no-op shell default added" \

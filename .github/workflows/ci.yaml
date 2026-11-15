@@ -6,12 +6,37 @@ on:
 
 permissions: {}
 
-# This is an EXAMPLE CI workflow. Replace the `example` job with your stack's
-# lint / type-check / test / build jobs, and list every job your tenant adds in
-# the `ci-required-checks` aggregator below. Keep `delivery-inputs`: it validates
-# the two tenant-owned artifacts that CD publishes. This file is yours to own —
-# add it to `.templatesyncignore` so template-sync never overwrites your stack's CI.
+# template:begin
+# scripts/scaffold.sh shapes this workflow once, when your repository is created:
+# it replaces the placeholder `stack` job with the chosen stack's job and, without
+# --tenancy, deletes the platform-tenant jobs and their `needs` entries.
+# template:end
+# This workflow is yours: keep it in `.templatesyncignore` so template-sync never
+# overwrites it, and list every job you add under `ci-required-checks.needs`.
 jobs:
+  # stack:begin
+  stack:
+    name: Stack
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Placeholder
+        run: echo "Replace this job with your stack's lint, test, and build steps."
+  # stack:end
+
+  # lint:begin
+  # Shared MegaLinter checks for workflows, scripts, Dockerfiles, Markdown, YAML and
+  # JSON. Go applications drop this job: the shared Go validator lints them.
+  lint:
+    name: Lint
+    # GitHub's `$/` self-repository form fails actionlint until it supports it
+    # (rhysd/actionlint#711); switch then.
+    uses: ./.github/workflows/lint.yaml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+  # lint:end
+
+  # tenancy:begin
   workflow-caller-pins:
     name: Workflow caller pins
     runs-on: ubuntu-latest
@@ -29,14 +54,7 @@ jobs:
       - name: 📌 Validate reusable workflow caller pins
         run: sh scripts/workflow-caller-pin-contract.test.sh
 
-  example:
-    name: Example
-    runs-on: ubuntu-latest
-    permissions: {}
-    steps:
-      - name: Placeholder
-        run: echo "Replace this job with your stack's lint, test, and build steps."
-
+  # Validates the two tenant-owned artifacts that CD publishes: the image and deploy/.
   delivery-inputs:
     name: Delivery inputs
     runs-on: ubuntu-latest
@@ -82,7 +100,8 @@ jobs:
       - name: 🧪 Test the publish pin check
         run: sh scripts/publish-pin-approved.test.sh
       - name: 📌 Refuse an unapproved publish-app pin
-        if: github.repository != 'devantler-tech/platform-tenant-template'
+        # The template repository, matched by its ID so the guard survives renames.
+        if: github.repository_id != '1253884448'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -97,29 +116,32 @@ jobs:
           git show "${BASE_SHA}:scripts/publish-pin-approved.sh" >"${RUNNER_TEMP}/publish-pin-approved.sh"
           git show "${BASE_SHA}:.github/workflows/cd.yaml" >"${RUNNER_TEMP}/base-cd.yaml"
           sh "${RUNNER_TEMP}/publish-pin-approved.sh" "${RUNNER_TEMP}/base-cd.yaml" .github/workflows/cd.yaml
+  # tenancy:end
 
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [workflow-caller-pins, example, delivery-inputs, publish-pin-approved]
+    needs:
+      - stack
+      - lint # lint
+      - workflow-caller-pins # tenancy
+      - delivery-inputs # tenancy
+      - publish-pin-approved # tenancy
     permissions:
       actions: read # native workflow-run metadata only
     if: ${{ always() }}
     steps:
+      # Every result in `needs` is consumed, so a job listed there can never be left out.
       - name: 📊 Require all CI checks to pass
         id: ci-checks
-        uses: devantler-tech/.github/actions/aggregate-job-checks@a76d5df9371cf712a8f60307fde060825a34cf35 # v21.3.4
+        uses: devantler-tech/.github/actions/aggregate-job-checks@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
         with:
           check-workflow-startup: "true"
-          job-results: >-
-            ${{ needs.example.result }}
-            ${{ needs.delivery-inputs.result }}
-            ${{ needs.workflow-caller-pins.result }}
-            ${{ needs.publish-pin-approved.result }}
+          job-results: ${{ join(needs.*.result, ' ') }}
       # aggregate-job-checks deliberately tolerates skipped dependencies. A
-      # stable required check must fail unless every named tenant job ran.
+      # stable required check must fail unless every listed job succeeded.
       - name: Reject incomplete CI jobs
-        if: ${{ needs.workflow-caller-pins.result != 'success' || needs.example.result != 'success' || needs.delivery-inputs.result != 'success' || needs.publish-pin-approved.result != 'success' }}
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
         run: exit 1
         shell: bash
       - name: Require workflow startup evidence

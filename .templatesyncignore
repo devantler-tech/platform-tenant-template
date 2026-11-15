@@ -1,19 +1,25 @@
-# .templatesyncignore — files an INSTANCE (tenant) created from this template OWNS.
+# .templatesyncignore — files an APPLICATION created from this template OWNS.
 #
 # Same syntax as .gitignore. The weekly template-sync workflow
 # (devantler-tech/.github .github/workflows/template-sync.yaml, using
 # AndreasAugustin/actions-template-sync) is skipped in this template repo itself
-# and runs in every tenant created from it — opening a PR that brings template
+# and runs in every application created from it — opening a PR that brings template
 # changes downstream. It only ever touches files that exist in this template, and
-# it SKIPS anything matched here, so a tenant lists the files it has tailored for
-# its own app and they are never clobbered by an upstream sync.
+# it SKIPS anything matched here, so an application lists the files it has tailored
+# and they are never clobbered by an upstream sync.
 #
 # Everything NOT listed here is TEMPLATE-OWNED shared plumbing kept current in
-# every tenant by template-sync — change those upstream in
-# devantler-tech/platform-tenant-template, never by editing them in a tenant.
-# Template-owned files: .github/workflows/{cd,release,template-sync}.yaml,
-# scripts/workflow-caller-pin-contract.test.sh, scripts/publish-pin-approved.sh (+ its test), CLAUDE.md,
-# docs/REFERENCE.md, zizmor.yml.
+# every application by template-sync — change those upstream in
+# devantler-tech/application-template, never by editing them in an application.
+# Template-owned files: .github/workflows/{release,template-sync,stale-issues,codeql,lint}.yaml,
+# .github/mega-linter.base.yml, .coderabbit.yaml, .markdownlint.json, .yamllint.yml, CLAUDE.md,
+# docs/REFERENCE.md, zizmor.yml and, for a platform tenant, .github/workflows/cd.yaml, renovate.json,
+# scripts/workflow-caller-pin-contract.test.sh and scripts/publish-pin-approved.sh
+# (+ its test). Where a shared file has an app-owned overlay (.mega-linter.yml
+# extends .github/mega-linter.base.yml; codeql.yaml reads
+# .github/codeql/codeql-config.yml), change the overlay to diverge, not the shared
+# file. An application scaffolded without --tenancy lists the tenant files below, so
+# they never come back.
 
 # --- Identity & docs (tenant-specific) ---
 AGENTS.md
@@ -28,6 +34,10 @@ LICENSE
 .github/dependabot.yml
 .releaserc
 .gitignore
+
+# --- The application's overlays on shared configuration ---
+.mega-linter.yml
+.github/codeql/codeql-config.yml
 
 # --- The tenant's own application ---
 # deploy/ holds the example app's Kustomize manifests; a tenant replaces them with
@@ -58,6 +68,14 @@ scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh
 scripts/platform-vpa-floor-contract.test.sh
 .github/workflows/validate-scaffold.yaml
+
+# --- The scaffold and its stacks (template-only; scripts/scaffold.sh removes them) ---
+# stacks/ holds the Go and .NET sources the scaffold copies once. After that the
+# copied files are the application's own, so nothing under stacks/ ever syncs.
+stacks/
+scripts/scaffold.sh
+scripts/scaffold.test.sh
+.github/workflows/validate-stacks.yaml
 
 # --- This ignore-list itself (the tenant curates its own ownership) ---
 # The tenant's copy is never overwritten, but each sync ADDS the entries of this

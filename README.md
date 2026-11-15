@@ -1,103 +1,135 @@
-# platform-tenant-template
+# application-template
 
-Start a new app for the
-[devantler-tech platform](https://github.com/devantler-tech/platform) from this
-starter. It supplies example Kubernetes manifests and build, signing, release
-and deployment plumbing for a tenant repository. It is not a platform installer.
+Start a new devantler-tech application from one template: pick a **Go**, **.NET**, **SvelteKit**
+or bring-your-own stack, and choose whether it runs on the
+[devantler-tech platform](https://github.com/devantler-tech/platform) as a **tenant**. One
+command lays down the stack and, if you want it, the tenancy; a weekly sync keeps the shared
+plumbing current afterwards.
 
-The platform calls such an app a **tenant**: it lives in its own repository, and the
-platform deploys what that repository publishes. The supplied [Dockerfile](Dockerfile)
-serves a placeholder HTTP page, not a finished application; replace it with your
-own app and image build. The starter is language-independent.
+This template replaces three starters that could not be combined: `go-template` and
+`dotnet-template` had no platform tenancy, and the tenant starter, formerly called
+`platform-tenant-template`, had no language stack. An application could only follow one of
+them.
 
-## Inspect the scaffold locally
-
-You need Git and [kubectl](https://kubernetes.io/docs/tasks/tools/) with its built-in
-Kustomize support. No GitHub token, Kubernetes credentials, cloud account or
-running cluster is needed for this first result:
-
-```sh
-git clone https://github.com/devantler-tech/platform-tenant-template.git
-cd platform-tenant-template
-kubectl kustomize deploy/
-kubectl kustomize deploy/dev
+```mermaid
+flowchart LR
+    template[application-template] --> scaffold["scripts/scaffold.sh &lt;stack&gt; [--tenancy]"]
+    scaffold --> go[Go service]
+    scaffold --> dotnet[.NET service]
+    scaffold --> svelte[SvelteKit app]
+    scaffold --> none[Your own stack]
+    go & dotnet & svelte & none --> tenancy{--tenancy?}
+    tenancy -- yes --> tenant[Platform tenant: deploy/, signed image and manifests, delivery gates]
+    tenancy -- no --> app[Application: CI and releases only]
 ```
 
-Success is exit 0 for both, with the example resources printed as YAML. `deploy/`
-renders production, including the Deployment, Service and HTTPRoute. `deploy/dev`
-renders the dev overlay: the same Deployment, Service, network policy and
-database at one replica, without the public route, disruption budget or
-production secrets. [The deploy layout](docs/REFERENCE.md#the-deploy-layout)
-explains where each manifest goes. Names and image values are placeholders.
-Rendering does not validate every CRD field, deploy an app or prove platform
-registration. Do not apply this unmodified scaffold to a cluster.
+## What you get
 
-To improve this upstream starter, follow [CONTRIBUTING.md](CONTRIBUTING.md).
-To adopt it as an app, use the separate maintainer steps below.
+| Choice | Adds |
+|---|---|
+| `go` | A Go `net/http` server with OpenFeature feature flags, table-driven tests, golangci-lint v2 and the shared Go validator in CI |
+| `dotnet` | An ASP.NET Core minimal API on .NET 11 with OpenFeature, xUnit v3 tests and warnings-as-errors analyzers, built and tested in CI |
+| `svelte` | A SvelteKit 3 and Svelte 5 app on Node 26 with `adapter-node`, OpenFeature, Vitest, svelte-check and ESLint |
+| `none` | A placeholder CI job for a stack you bring yourself; with `--tenancy` also a placeholder Dockerfile, otherwise you add your own build files |
+| `--tenancy` | `deploy/` Kustomize manifests, a signed image and manifests release on every `v*` tag, and CI that builds the image and renders `deploy/` and `deploy/dev` before merge |
 
-## Use this template
+Every stack serves a placeholder page at `GET /` on port 3000, which is where the tenant's probes
+look, so a new tenant deploys before you write any code.
+
+## Shared across every application
+
+The weekly template sync keeps one copy of each cross-cutting concern current in every
+application. Where an application needs to differ, it changes its own overlay file, which the sync
+never touches, rather than the shared file:
+
+| Concern | Shared, kept current by the sync | Yours, to diverge |
+|---|---|---|
+| Releases | `release.yaml`: Conventional-Commit releases | `.releaserc` |
+| Linting | `lint.yaml` and `.github/mega-linter.base.yml`: MegaLinter for workflows, scripts, Dockerfiles, Markdown, YAML, JSON, manifests and secrets; Go applications lint through the shared Go validator instead | `.mega-linter.yml`, which extends the base |
+| Markdown and YAML style | `.markdownlint.json`, `.yamllint.yml` | list them in `.templatesyncignore` and own them |
+| Code scanning | `codeql.yaml`: advanced CodeQL, with languages detected from your files | `.github/codeql/codeql-config.yml` |
+| Code review | `.coderabbit.yaml`, layered over the organization's CodeRabbit settings | list it in `.templatesyncignore` and own it |
+| Dependency updates | Renovate for `deploy/` image tags and Helm charts only (tenants), extending the organization preset | `.github/dependabot.yml` for packages, Actions and the Dockerfile |
+| Agent instructions | `CLAUDE.md` | `AGENTS.md` |
+
+The organization's required workflows (dependency review, workflow scanning, auto-merge policy
+and PR admission) apply to every repository without any file here. Advanced CodeQL stays off
+until the repository's default setup is turned off and the `CODEQL_SETUP` variable is set to
+`advanced`; [`codeql.yaml`](.github/workflows/codeql.yaml) explains the switch.
+
+## Try it locally
+
+You need Git and a POSIX shell. To build the result you also need the stack's toolchain (a Go
+toolchain meeting its `go.mod`, or the .NET SDK its `global.json` names) or Docker. No GitHub
+token, cloud account or cluster is needed. This scaffolds a Go tenant in a throwaway copy:
+
+```sh
+git clone --depth 1 https://github.com/devantler-tech/platform-tenant-template.git demo-app
+cd demo-app
+rm -rf .git
+scripts/scaffold.sh go --tenancy
+go test ./...
+```
+
+Success is the scaffold printing `Scaffolded 'demo-app' (stack: go, platform tenant: yes).`
+and the tests passing. `kubectl kustomize deploy/` then renders the tenant's manifests and
+`docker build .` builds its image. The scaffold refuses to run in a checkout of this template
+itself, which is why the copy drops `.git`.
+
+To improve this upstream template, follow [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Create an application
 
 Creation is currently blocked until [#211](https://github.com/devantler-tech/platform-tenant-template/issues/211)
-enables this repository as a GitHub template. Inspecting and contributing above
-still work. Once enabled, an authorized maintainer can click **Use this template**
-on the repository page, choose the intended owner and private visibility, or use
-the CLI route below.
+enables this repository as a GitHub template. Trying it locally and contributing still work.
 
-1. **Create your repository.** This is an organization write, not local setup.
-   It needs [GitHub CLI](https://cli.github.com/) authentication and permission to
-   create a private repository in devantler-tech. Replace `my-tenant` with the
-   intended repository name and run only when you intend to create it:
+1. **Create the repository from this template.** This is an organization write, not local
+   setup; follow the repository-creation process of your organization.
+2. **Scaffold it.** In your new repository's checkout, run
+   [`scripts/scaffold.sh`](scripts/scaffold.sh) once with your stack, and `--tenancy` if it will
+   run on the platform:
 
    ```sh
-   gh repo create devantler-tech/my-tenant --template devantler-tech/platform-tenant-template --private
-   gh repo clone devantler-tech/my-tenant
-   cd my-tenant
+   scripts/scaffold.sh go --tenancy
    ```
 
-2. **Rename the placeholder app to your tenant name.** Run
-   [`scripts/rename-placeholders.sh`](scripts/rename-placeholders.sh). It uses the
-   directory name, or you can pass one: `scripts/rename-placeholders.sh my-tenant`.
-   The name must equal the repository name. [What the rename changes](docs/REFERENCE.md#what-the-rename-changes)
-   lists everything it touches. Run it only in your generated app repository,
-   never in an upstream contribution checkout. Review `git diff` and run
-   `kubectl kustomize deploy/` and `kubectl kustomize deploy/dev` again; this is
-   still only a local render.
-3. **Replace the example with your app:** application code, `Dockerfile`, the
-   example stack job in `.github/workflows/ci.yaml`, and `AGENTS.md`.
+   The name defaults to the directory name and must equal the repository name; pass it as the
+   last argument to choose it yourself. [What the scaffold changes](docs/REFERENCE.md#what-the-scaffold-changes)
+   lists everything it touches. Review `git status` and `git diff`, then commit.
+3. **Make it yours.** Replace the placeholder page with your app, fill in the remaining
+   placeholders in `AGENTS.md`, and replace `README.md` and `CONTRIBUTING.md` with your own.
 4. **Protect your own files from the weekly sync.** Tailor the supplied
-   [`.templatesyncignore`](.templatesyncignore) and replace the contribution guide
-   with your app's process. [The ownership reference](docs/REFERENCE.md#what-the-template-owns-vs-what-you-own)
-   explains which files sync may replace. Sync needs the configured GitHub App
-   credentials; they are not needed for the public local inspection above.
-   Existing tenants must confirm their own ignore file contains `CONTRIBUTING.md`
-   before the sync runs. The current workflow merges new ignore entries, but an
-   older consumer workflow may not; add and commit the entry yourself if missing.
-   If a sync PR is already open, restore your tailored guide and commit the ignore
-   entry before merging it: the entry does not undo changes already proposed.
-5. **Register the tenant on the platform.** Follow
+   [`.templatesyncignore`](.templatesyncignore). [The ownership reference](docs/REFERENCE.md#what-the-template-owns-vs-what-you-own)
+   explains which files sync may replace. Sync needs the configured GitHub App credentials.
+   Existing applications must confirm their own ignore file contains `CONTRIBUTING.md` before
+   the sync runs. The current workflow merges new ignore entries, but an older consumer
+   workflow may not; add and commit the entry yourself if missing. If a sync PR is already
+   open, restore your tailored guide and commit the ignore entry before merging it: the entry
+   does not undo changes already proposed.
+5. **Register a tenant on the platform.** Follow
    [`platform/docs/TENANTS.md`](https://github.com/devantler-tech/platform/blob/main/docs/TENANTS.md).
 
-Default PR CI always builds the tenant image and renders `deploy/` and its
-`deploy/dev` overlay before merge, using no secrets or write authority. Keep the `delivery-inputs` job and its entry
-in `ci-required-checks` when you replace the example job with your stack's lint,
-test, and build commands. This catches the same image and manifest failures in
-the pull request that introduced them instead of during release or reconciliation.
-Keep the `publish-pin-approved` job and its entry too: it holds back a dependency
-update that moves the publishing workflow to a revision the platform has not yet
-approved for your tenant, so the release it would cut does not fail to deploy.
+Default PR CI always builds the tenant image and renders `deploy/` before merge, using no
+secrets or write authority. Keep the `delivery-inputs` job and its entry in
+`ci-required-checks` when you change the stack job. This catches the same image and manifest
+failures in the pull request that introduced them instead of during release or reconciliation.
+Keep the `publish-pin-approved` job and its entry too: it verifies the direct publisher’s
+minimal signing job and retains the approval checks while an existing tenant uses the shared
+reusable publisher. An application scaffolded without
+`--tenancy` has neither job.
 
-After authorized App setup and platform registration, eligible Conventional
-Commits can produce tags that trigger the signed publishing pipeline. Neither a
-local render nor the presence of workflow files proves publication or a live
-deployment. [How publishing works](docs/REFERENCE.md#how-publishing-works)
-explains the handoff and checks. Release and publication intentionally no-op in
-this upstream template repository.
+After authorized App setup and platform registration, eligible Conventional Commits can produce
+tags that trigger the signed publishing pipeline. Neither a local render nor the presence of
+workflow files proves publication or a live deployment. [How publishing works](docs/REFERENCE.md#how-publishing-works)
+explains the handoff and checks. Release and publication intentionally no-op in this upstream
+template repository.
 
 ## Reference
 
-[`docs/REFERENCE.md`](docs/REFERENCE.md) covers what the rename changes, which files the template
-keeps in sync and which are yours, how publishing works, and how to validate the template locally.
+[`docs/REFERENCE.md`](docs/REFERENCE.md) covers what the scaffold and the rename change, which
+files the template keeps in sync and which are yours, how publishing works, and how to validate
+the template locally.
 
-The scaffold is [Apache-2.0 licensed](LICENSE). Upstream community and private
-security-reporting routes are in [CONTRIBUTING.md](CONTRIBUTING.md); tenant apps
-own their own contribution and disclosure policies.
+The template is [Apache-2.0 licensed](LICENSE). Upstream community and private
+security-reporting routes are in [CONTRIBUTING.md](CONTRIBUTING.md); applications own their own
+contribution and disclosure policies.

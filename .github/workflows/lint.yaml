@@ -1,0 +1,35 @@
+name: 🧹 Lint
+
+# Shared lint job, called from ci.yaml so its result counts towards
+# CI - Required Checks. The template owns this workflow and template-sync keeps it
+# current; configure what it checks in .mega-linter.yml. Go applications do not
+# call it: the shared Go validator already runs MegaLinter with signed fixes.
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  megalinter:
+    name: MegaLinter
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout only; findings stay in the job log
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Read-only: a finding a linter could fix still fails the job, so fix it locally.
+      - name: 🧹 MegaLinter
+        uses: oxsecurity/megalinter/flavors/cupcake@f2fe8c1cba37091848df3e524066c8c23ef353ed # v10.2.0
+        env:
+          VALIDATE_ALL_CODEBASE: true
+          APPLY_FIXES: none
+          # actionlint in MegaLinter does not know the newer `code-quality` permission yet.
+          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality

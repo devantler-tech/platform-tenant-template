@@ -1,19 +1,48 @@
 # Template reference
 
-The detail behind the [README](../README.md): what the placeholder rename changes, how `deploy/` is
-laid out, which files the template keeps in sync and which are yours, how publishing works, and how
-to validate the template locally.
+The detail behind the [README](../README.md): what the scaffold and the placeholder rename change,
+which files the template keeps in sync and which are yours, how publishing works, and how to validate
+the template locally.
+
+## What the scaffold changes
+
+`scripts/scaffold.sh <go|dotnet|svelte|none> [--tenancy] [name]` runs once in a repository created from
+this template. `name` defaults to the checkout's directory name and must be a DNS-1123 label equal
+to the repository name.
+
+- **Stack.** `go`, `dotnet` and `svelte` copy `stacks/<stack>/` over the template: the source and tests,
+  lint and analyzer configuration, a Dockerfile, and the stack's CI job, which replaces the
+  placeholder `stack` job in `.github/workflows/ci.yaml`. The stack's Dependabot ecosystem is
+  appended to `.github/dependabot.yml` and its `## Stack` and `## Validation` text replaces the
+  placeholders in `AGENTS.md`. The Go module becomes `github.com/devantler-tech/<name>`; the .NET
+  solution, projects and namespace become the PascalCase form of `<name>`; the SvelteKit package
+  becomes `<name>`. `none` keeps the placeholder job, and with `--tenancy` the placeholder
+  Dockerfile, for a stack you bring yourself; without `--tenancy` you add your own build files.
+  Every stack except Go keeps the `lint` job, which calls the shared MegaLinter workflow; a Go
+  application drops it because the shared Go validator already runs MegaLinter.
+- **Tenancy.** With `--tenancy` the application stays a platform tenant: `deploy/`, `cd.yaml`,
+  the image's Dependabot entry, `renovate.json` and the CI jobs that guard the image and manifests
+  stay, and
+  `scripts/rename-placeholders.sh` renames `deploy/` (below). Without it, all of them are
+  removed and the tenant-only template files are added to `.templatesyncignore`, so template-sync
+  never brings them back.
+- **Template machinery.** `stacks/`, the scaffold, the template's own validation workflows and its
+  scaffold-time tests are removed; `.templatesyncignore` already lists each of them.
+
+The edits follow `stack`, `lint`, `tenancy` and `template` markers in `ci.yaml`, `dependabot.yml`
+and `AGENTS.md`, so none are left behind. The CI aggregate consumes `needs.*.result`, so dropping a job
+and its `needs` entry leaves nothing else to edit. The scaffold refuses an unknown stack or option,
+an invalid name, a second run and the upstream template checkout before it changes anything.
 
 ## What the rename changes
 
-`scripts/rename-placeholders.sh` rewrites the `app`, `REPLACE_ME`, and `replace-me`
-placeholders across `deploy/` and its `base/`, `prod/` and `dev/` overlays
-consistently, including the container name, Vault role,
+With `--tenancy`, `scripts/scaffold.sh` runs `scripts/rename-placeholders.sh`, which rewrites the `app`, `REPLACE_ME`, and `replace-me`
+placeholders in `deploy/`, `base/`, `prod/` and `dev/` consistently, including the container name, Vault role,
 and ServiceAccount. Those values **must** equal the repository name (see the
 convention under [How publishing works](#how-publishing-works)). The helper
 preserves the `app.kubernetes.io/name` label *keys*, CloudNativePG's literal `-app`
 secret suffix, and the `openbao` SecretStore name. Doing this by hand is easy to get
-half-wrong. It's a one-shot helper, so delete it once adopted.
+half-wrong. It's a one-shot helper: the scaffold removes it once it has run.
 
 The example route is renamed for both environments: `<tenant>.platform.lan`
 locally and `<tenant>.platform.devantler.tech` in production, both in
@@ -83,25 +112,35 @@ restore the tailored guide and commit the ignore entry before merging it;
 changing the ignore file does not undo an existing proposal. To receive a file
 the template excludes, add the line `!<entry>` to your list.
 
-**Owned by the template (kept in sync — do not edit in your tenant):**
+**Owned by the template (kept in sync — do not edit in your application).** Rows marked
+*tenant* exist only in platform tenants; an application scaffolded without `--tenancy` ignores them:
 
 | File | Purpose |
 |---|---|
-| `.github/workflows/cd.yaml` | On a `v*` tag, calls `publish-app.yaml` to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact |
+| `.github/workflows/cd.yaml` (*tenant*) | On a `v*` tag, runs the pinned `actions/publish-app` action to build, digest-pin, push and sign the image and manifests as this repository’s own release workflow |
 | `.github/workflows/release.yaml` | semantic-release on `main` (cuts the `v*` tags that drive `cd.yaml`) |
+| `.github/workflows/codeql.yaml` | Advanced CodeQL for the languages found in the repository, reading `.github/codeql/codeql-config.yml`; off until default setup is off and `CODEQL_SETUP=advanced` |
+| `.github/workflows/lint.yaml`, `.github/mega-linter.base.yml` | The shared MegaLinter job `ci.yaml` calls, and the base configuration `.mega-linter.yml` extends |
+| `.markdownlint.json` | The shared Markdown rules MegaLinter applies |
+| `.yamllint.yml` | The shared YAML rules MegaLinter applies |
+| `.coderabbit.yaml` | Shared CodeRabbit settings, layered over the organization's with `inheritance: true` |
+| `renovate.json` (*tenant*) | Renovate for `deploy/` image tags and Helm charts only, extending the organization preset; Dependabot keeps everything else |
 | `.github/workflows/template-sync.yaml` | Opens the weekly template-sync PR |
 | `CLAUDE.md` | `@AGENTS.md` shim |
 | `docs/REFERENCE.md` | This reference |
-| `scripts/workflow-caller-pin-contract.test.sh` | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
-| `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` | The check a tenant's required CI runs to refuse a changed publisher identity until Platform approves it for that tenant. Legacy revisions use the existing approved set; maintained publishers require an exact canonical approval. The default `ci.yaml` runs the `publish-pin-approved` job and includes it in `ci-required-checks`; this unregistered template runs its tests only. Older tenants that own `ci.yaml` add the job themselves |
+| `scripts/workflow-caller-pin-contract.test.sh` (*tenant*) | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
+| `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` (*tenant*) | Checks the minimal direct-action signing job. Existing reusable-workflow callers retain their exact Platform approval checks. The default `ci.yaml` runs the `publish-pin-approved` job and includes it in `ci-required-checks`; this unregistered template runs its tests only. Older tenants that own `ci.yaml` add the job themselves |
 | `zizmor.yml` | GitHub Actions pinning policy enforced by the security scan |
 
-**Scaffold-time only (arrives when the repo is created — never re-synced, so a
-tenant still carrying these from an older sync can delete them for good):**
+**Scaffold-time only (arrives when the repo is created, is removed by `scripts/scaffold.sh`, and is
+never re-synced, so a tenant still carrying these from an older sync can delete them for good):**
 
 | File | Purpose |
 |---|---|
-| `.github/workflows/validate-scaffold.yaml` | Renders `deploy/` and `deploy/dev`, schema-validates every resource, keeps dev free of production-only objects, applies the live Platform/shared Kyverno policies, and exercises a pinned Kubernetes API. The live checks prove the template publishes through the pinned signing workflow; Platform still wires the private GHCR pull credential to the tenant identity and cosign-verifying OCI source; and Flux consumes that source while impersonating and targeting the managed `restricted` namespace for both KRO and manual registrations. They then prove the Deployment passes Pod Security `restricted`, the tenant identity can reconcile every rendered kind, and cluster-scoped or interactive privileges remain denied. It gates template PRs, re-validates `main` after every merge, and rechecks upstream drift every day at 06:17 UTC (or on manual dispatch), keeping one tracking issue open while that scheduled check fails on `main`; structural mutation tests keep every layer fail-closed. The workflow no-ops in tenants and is scaffold-time only |
+| `stacks/` | The Go and .NET stack sources the scaffold copies once; the copies are then yours |
+| `scripts/scaffold.sh` (+ its test) | One-shot stack and tenancy scaffold; its test scaffolds every combination and checks what each leaves |
+| `.github/workflows/validate-stacks.yaml` | Scaffolds each stack as a tenant, then builds, tests, lints, renders `deploy/`, builds the image and checks it serves `GET /` under the restricted container settings |
+| `.github/workflows/validate-scaffold.yaml` | Renders `deploy/` and `deploy/dev`, schema-validates every resource, applies the live Platform/shared Kyverno policies, and exercises a pinned Kubernetes API. The live checks prove the template publishes through the pinned signing workflow; Platform still wires the private GHCR pull credential to the tenant identity and cosign-verifying OCI source; and Flux consumes that source while impersonating and targeting the managed `restricted` namespace for both KRO and manual registrations. They then prove the Deployment passes Pod Security `restricted`, the tenant identity can reconcile every rendered kind, and cluster-scoped or interactive privileges remain denied. It gates template PRs, re-validates `main` after every merge, and rechecks upstream drift every day at 06:17 UTC (or on manual dispatch), keeping one tracking issue open while that scheduled check fails on `main`; structural mutation tests keep every layer fail-closed. The workflow no-ops in tenants and is scaffold-time only |
 | `scripts/rename-placeholders.sh` (+ its test) | One-shot rename of the placeholder app to your tenant name |
 | `scripts/agent-instructions.test.sh` | Fails closed if the one-time agent scaffold loses its ownership, dependency-bot, external-code, exact-head review, pinned-merge, or user-path evaluation boundaries, or regains a retired rule |
 | `scripts/workflow-caller-contract.test.sh` | Keeps the portable caller-pin contract wired into tenant CI while validating template-only publisher, release, ownership, and scaffold invariants |
@@ -121,6 +160,8 @@ AGENTS.md
 .github/CODEOWNERS
 .github/workflows/ci.yaml
 .github/dependabot.yml
+.mega-linter.yml
+.github/codeql/codeql-config.yml
 .releaserc
 .gitignore
 Dockerfile
@@ -130,8 +171,12 @@ LICENSE
 deploy/
 .templatesyncignore
 
-# Template scaffolding — dead code in a live tenant; keep ignored so a
+# Template scaffolding — dead code in a live application; keep ignored so a
 # template-sync never re-introduces it after you delete it.
+stacks/
+scripts/scaffold.sh
+scripts/scaffold.test.sh
+.github/workflows/validate-stacks.yaml
 scripts/rename-placeholders.sh
 scripts/rename-placeholders.test.sh
 scripts/agent-instructions.test.sh
@@ -148,6 +193,13 @@ scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh
 scripts/platform-vpa-floor-contract.test.sh
 .github/workflows/validate-scaffold.yaml
+
+# Only without --tenancy: the tenant plumbing the scaffold removed.
+.github/workflows/cd.yaml
+renovate.json
+scripts/publish-pin-approved.sh
+scripts/publish-pin-approved.test.sh
+scripts/workflow-caller-pin-contract.test.sh
 ```
 
 `AGENTS.md` and the `maintain` skill ship as scaffolding (a starting point for new
@@ -166,51 +218,28 @@ image, so their updates reach production on their own. GitHub Actions updates
 use the `ci` prefix (set in `.github/dependabot.yml`) and release nothing.
 Tenants own both files, so an existing tenant adds the `build(deps)` rule and
 the `ci` prefix itself.
-Each tag triggers `cd.yaml`, which calls the platform's
-[`publish-app.yaml`](https://github.com/devantler-tech/.github/blob/main/.github/workflows/publish-app.yaml)
-reusable workflow to build the image, **pin its digest into the app container in
-`deploy/base/deployment.yaml`** (`deploy/deployment.yaml` in a tenant without
-`deploy/base/`), push the whole `deploy/` tree as one OCI artifact, and
-**cosign-sign** both. The platform's `OCIRepository` verifies that signature, so
-only artifacts from this trusted workflow are eligible for reconciliation after
-the platform has registered the tenant and its applicable publisher-approval
-checks pass. Workflow configuration alone does not prove that publication or
-reconciliation succeeded.
+Each tag triggers `cd.yaml`, which runs the pinned
+[`actions/publish-app`](https://github.com/devantler-tech/.github/tree/main/actions/publish-app)
+composite action directly in this repository. It builds the image, pins its digest into
+`deploy/base/deployment.yaml`, and publishes the entire `deploy/` tree, including both overlays.
+The image and manifests are signed as this repository’s own release workflow on its release tag.
+The action refuses a tag outside the default branch, a persisted checkout credential, invalid
+inputs, changed deployment sources and an occupied version before publication. It verifies the
+signatures before exposing release tags. The upstream template itself never publishes.
 
-Before moving a publisher between repositories, merge and template-sync the
-approval check first. CI executes the check from the base revision so the
-repoint cannot authorize itself. The same commit identifier in another
-repository is a changed identity, not an unchanged pin. Maintained publishing
-requires the tenant's exact `publish-app` approval in Platform's canonical
-record, with at most two distinct reviewed commits during a transition; legacy
-approvals do not authorize it. Merge and verify the corresponding Platform
-approval and image/manifest verification policy before changing a tenant caller.
+The required caller-pin check binds the action’s immutable commit to its version tag and rejects
+versions below the reviewed floor. The signing-job check retains a tag-only trigger, credential-free
+checkout, minimal permissions, serialization and an unskippable publisher. Existing reusable-workflow
+callers still require their exact Platform publisher approvals; the direct action uses the tenant’s
+own release identity instead. Keep the approval job while migrating existing consumers.
 
-The live envelope check accepts the manual tenant matcher's strict writer forms:
-one to three distinct legacy commit IDs, optionally paired with one or two
-distinct maintained commit IDs. Both locations must name the same app publisher,
-all IDs must be full lowercase commit IDs, and the whole subject must be anchored.
-Its controls exercise copies of the Platform envelope and reject mutable refs,
-wildcards, wrong producers, duplicate IDs and excess approvals. This checks the
-writer's narrow shape; Platform still owns which exact revisions are approved.
-The generic KRO rule may retain the existing legacy full-commit pattern, alone
-or paired with one or two literal maintained commits. Its rule must also match
-the starter's actual pinned publisher identity; recognizing a valid rule shape
-does not establish that the producer and consumer agree. Maintained wildcards,
-mutable callers, multiple YAML documents and control characters are rejected.
-The current conditional TenantSource form is recognized without executing CEL:
-the default subject is decoded and checked against the actual caller, while the
-explicit arm must retain its exact maintained-publisher path and full-revision
-schema. Digest selection must retain the immutable digest schema, and optional
-application reconciliation must default on and preserve its deletion guard.
-Static OCI references remain supported; conditional application reconciliation
-still requires the same source schema and safeguards with that reference form.
-The starter uses the maintained publisher at its reviewed minimum version.
-Its portable guard rejects a return to the retired catalogue, movable refs,
-older versions and version comments that do not match the immutable commit.
-The Platform approval and verification policy must be deployed before a live
-tenant adopts that caller. This compatibility check does not activate publishing
-or authorize a tenant's caller pin.
+The live envelope check reads Platform’s current KRO and manual tenant definitions. It verifies the
+source, namespace, credential, reconciliation and OpenBao boundaries, including a match between the
+starter’s own release identity and the generic tenant’s signer rule. Its existing shared-publisher
+compatibility cases still reject mutable references, wrong producers, excess or duplicate approvals,
+multiple YAML documents and malformed conditional source expressions. New controls also reject a
+shared-only rule for the direct publisher and a signer name taken from anywhere except the tenant
+name. This source compatibility check establishes no actual publication or deployment.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
@@ -223,7 +252,7 @@ head, using only Actions read access. It requires a complete clear snapshot in
 addition to successful tenant jobs. Separate workflows still need their own
 required checks for failures that happen after that snapshot.
 
-Run these from the repository root. In every tenant, and in this template:
+Run these from the repository root. In every platform tenant, and in this template:
 
 ```sh
 kubectl kustomize deploy/                              # production manifests build
@@ -238,6 +267,7 @@ scaffold-time scripts, but template sync never updates them, so a tenant that
 keeps them runs them against stale copies; live tenants delete and ignore them:
 
 ```sh
+sh scripts/scaffold.test.sh                           # stack and tenancy scaffold, every combination
 sh scripts/rename-placeholders.test.sh                # onboarding contract
 sh scripts/agent-instructions.test.sh                 # agent safety contract
 sh scripts/workflow-caller-contract.test.sh           # template-only caller/scaffold contract

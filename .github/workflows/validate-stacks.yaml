@@ -1,0 +1,152 @@
+name: 🧩 Validate Stacks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions: {}
+
+# Template-only. Scaffolds each stack as a platform tenant in a disposable copy,
+# then builds, tests and lints it, renders deploy/, builds the image and runs it
+# under the platform's restricted container settings to check it serves GET /,
+# which the probes call. scripts/scaffold.test.sh (in Validate Scaffold) covers
+# the files each combination leaves; this covers whether they work. Applications
+# never run it: the scaffold removes it and .templatesyncignore keeps it out.
+jobs:
+  stack:
+    name: Stack (${{ matrix.stack }})
+    # The template repository, matched by its ID so the guard survives renames.
+    if: github.repository_id == '1253884448'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout only
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [go, dotnet, svelte, none]
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 🧩 Scaffold
+        env:
+          STACK: ${{ matrix.stack }}
+        run: |
+          set -eu
+          APP="${RUNNER_TEMP}/demo-app"
+          echo "APP=${APP}" >>"${GITHUB_ENV}"
+          mkdir -p "${APP}"
+          git archive HEAD | tar -x -C "${APP}"
+          sh "${APP}/scripts/scaffold.sh" "${STACK}" --tenancy demo-app
+          # A repository, as the application would be: MegaLinter reads .gitignore through git.
+          git -C "${APP}" init -q
+          git -C "${APP}" add -A
+
+      # The shared lint job every non-Go application runs, on the fresh scaffold. The
+      # runner temp directory is mounted at /github/runner_temp in the linter container.
+      - name: 🧹 Lint the scaffold
+        if: matrix.stack != 'go'
+        uses: oxsecurity/megalinter/flavors/cupcake@f2fe8c1cba37091848df3e524066c8c23ef353ed # v10.2.0
+        env:
+          DEFAULT_WORKSPACE: /github/runner_temp/demo-app
+          VALIDATE_ALL_CODEBASE: true
+          APPLY_FIXES: none
+          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality
+
+      - name: ⚙️ Set up Go
+        if: matrix.stack == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ${{ env.APP }}/go.mod
+          cache: false
+      - name: 🧪 Test Go
+        if: matrix.stack == 'go'
+        working-directory: ${{ env.APP }}
+        run: go test -race ./...
+      - name: 🧹 Lint Go
+        if: matrix.stack == 'go'
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          # The version the shared Go validator runs in every Go application.
+          version: v2.14.0
+          working-directory: ${{ env.APP }}
+          verify: false
+
+      - name: 🧪 Build and test .NET
+        if: matrix.stack == 'dotnet'
+        uses: devantler-tech/.github/actions/run-dotnet-tests@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
+        with:
+          working-directory: ${{ env.APP }}
+          github-token: ""
+
+      - name: ⚙️ Set up Node
+        if: matrix.stack == 'svelte'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ${{ env.APP }}/.node-version
+      - name: 🧪 Lint, check, test and build SvelteKit
+        if: matrix.stack == 'svelte'
+        working-directory: ${{ env.APP }}
+        run: |
+          set -eu
+          npm ci
+          npm run lint
+          npm run check
+          npm test
+          npm run build
+
+      - name: 🧱 Render manifests
+        working-directory: ${{ env.APP }}
+        run: kubectl kustomize deploy/ >/dev/null
+      - name: 🐳 Build image
+        working-directory: ${{ env.APP }}
+        run: docker build --tag demo-app .
+      # The settings deploy/deployment.yaml enforces: non-root user 1000, a
+      # read-only root filesystem with a writable /tmp, and no capabilities.
+      - name: 🚦 Serve GET /
+        run: |
+          set -eu
+          docker run --detach --name demo-app --read-only --tmpfs /tmp \
+            --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges \
+            --env PORT=3000 --publish 3000:3000 demo-app
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/ >"${RUNNER_TEMP}/page.html"; then
+              grep -q 'Replace this placeholder' "${RUNNER_TEMP}/page.html"
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs demo-app
+          echo "::error::the image did not serve GET / on port 3000 within 30 seconds"
+          exit 1
+
+  validate-stacks:
+    name: Validate Stacks
+    needs: [stack]
+    if: ${{ always() && github.repository_id == '1253884448' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # native workflow-run metadata only
+    steps:
+      - name: 📊 Require every stack to pass
+        id: checks
+        uses: devantler-tech/.github/actions/aggregate-job-checks@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
+        with:
+          check-workflow-startup: "true"
+          job-results: ${{ join(needs.*.result, ' ') }}
+      - name: Reject incomplete stack jobs
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}
+        run: exit 1
+        shell: bash
+      - name: Require workflow startup evidence
+        if: ${{ steps.checks.outputs.startup-clear != 'true' }}
+        run: exit 1
+        shell: bash

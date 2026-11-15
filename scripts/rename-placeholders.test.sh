@@ -38,6 +38,12 @@ fail() {
 	exit 1
 }
 
+# The publisher must be able to find the app inside the complete artifact tree.
+# A flat-layout default would make every generated tenant's first release fail.
+app_manifest=$(yq eval -r '.jobs.publish.steps[] | select(.id == "publish") | .with."app-manifest"' "$repo_root/.github/workflows/cd.yaml")
+[ -n "$app_manifest" ] && [ -f "$repo_root/deploy/$app_manifest" ] ||
+	fail "publisher app-manifest does not name an existing deployment manifest"
+
 # Every manifest under a deploy/ tree — the root entry and its base/, prod/ and
 # dev/ overlays — concatenated in a stable order.
 deploy_yaml() {

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Renovate only fills Dependabot's gaps: the image tags and Helm charts in deploy/.",
+    "Dependabot keeps packages, GitHub Actions and the Dockerfile current, so Renovate's other managers stay off and no update arrives twice.",
+    "The template owns this file; list it in .templatesyncignore to diverge."
+  ],
+  "extends": ["github>devantler-tech/.github:renovate-config"],
+  "enabledManagers": ["kubernetes", "kustomize"],
+  "kubernetes": {
+    "managerFilePatterns": ["/^deploy/.+\\.ya?ml$/"]
+  },
+  "packageRules": [
+    {
+      "description": "cd.yaml pins this application's own image digest at release time.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/devantler-tech/**"],
+      "enabled": false
+    }
+  ]
+}

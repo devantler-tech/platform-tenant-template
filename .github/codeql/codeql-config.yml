@@ -1,0 +1,16 @@
+# What CodeQL analyses in this application. This file is yours: template-sync never
+# overwrites it, while .github/workflows/codeql.yaml, which reads it, stays shared.
+# Reference: https://docs.github.com/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning
+name: CodeQL configuration
+
+# security-extended adds lower-precision security queries to the default suite.
+queries:
+  - uses: security-extended
+
+# Generated and vendored output is not your code.
+paths-ignore:
+  - "**/node_modules"
+  - "**/.svelte-kit"
+  - "**/build"
+  - "**/bin"
+  - "**/obj"

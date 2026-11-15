@@ -1,0 +1,17 @@
+---
+# Shared yamllint rules for every application made from application-template. The
+# template owns this file and template-sync keeps it current; list it in
+# .templatesyncignore to diverge.
+extends: default
+rules:
+  # GitHub Actions' `on:` key is not a boolean.
+  truthy:
+    check-keys: false
+  # Manifests and workflows rarely start with `---`, and long lines carry URLs and expressions.
+  document-start: disable
+  line-length: disable
+  # One space before an inline comment, as Prettier writes it.
+  comments:
+    min-spaces-from-content: 1
+  # A section comment sits at the level of the block it opens or closes.
+  comments-indentation: disable

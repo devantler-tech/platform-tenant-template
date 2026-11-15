@@ -1,10 +1,18 @@
 version: 2
 updates:
-  # Baseline ecosystems shared by every tenant. Tenants whose stack needs more
-  # ecosystems (e.g. npm, gomod, nuget) add them here and list this file in
-  # `.templatesyncignore` so template-sync does not overwrite their additions.
+  # template:begin
+  # scripts/scaffold.sh appends the chosen stack's ecosystem, deletes the docker entry
+  # without --tenancy, and deletes every line and block marked `template`: those only keep
+  # this template's own stack sources current.
+  # template:end
+  # This file is yours and listed in `.templatesyncignore`: add the ecosystems your
+  # application needs here.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /stacks/go/.github/workflows # template
+      - /stacks/dotnet/.github/workflows # template
+      - /stacks/svelte/.github/workflows # template
     schedule:
       interval: daily
     open-pull-requests-limit: 10
@@ -60,10 +68,58 @@ updates:
       exclude:
         - "devantler-tech/*"
 
+  # tenancy:begin
   - package-ecosystem: docker
-    directory: /
+    directories:
+      - /
+      - /stacks/go # template
+      - /stacks/dotnet # template
+      - /stacks/svelte # template
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      include: "scope"
     cooldown:
       default-days: 7
+  # tenancy:end
+
+  # template:begin
+  - package-ecosystem: gomod
+    directory: /stacks/go
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: nuget
+    directory: /stacks/dotnet
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: npm
+    directory: /stacks/svelte
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    groups:
+      npm:
+        patterns:
+          - "*"
+    cooldown:
+      default-days: 7
+  # template:end

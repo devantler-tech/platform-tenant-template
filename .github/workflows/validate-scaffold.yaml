@@ -58,7 +58,8 @@ permissions: {}
 jobs:
   validate-scaffold:
     name: Validate Scaffold
-    if: github.repository == 'devantler-tech/platform-tenant-template'
+    # The template repository, matched by its ID so the guard survives renames.
+    if: github.repository_id == '1253884448'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout
@@ -88,7 +89,7 @@ jobs:
           workflow=.github/workflows/validate-scaffold.yaml
           expected_if=$(
             printf '%s' \
-              "github.repository == 'devantler-tech/platform-tenant-template'"
+              "github.repository_id == '1253884448'"
           )
           export expected_if
           # The drift reporter's conditions are pinned exactly: a widened job
@@ -97,7 +98,7 @@ jobs:
           expected_report_if=$(
             printf '%s' \
               "!cancelled()" \
-              " && github.repository == 'devantler-tech/platform-tenant-template'" \
+              " && github.repository_id == '1253884448'" \
               " && github.ref == 'refs/heads/main'" \
               " && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
           )
@@ -457,6 +458,12 @@ jobs:
         # it ships to every tenant). kubectl is preinstalled, so the test's
         # post-rename `kubectl kustomize` build assertion runs here too.
         run: sh scripts/rename-placeholders.test.sh
+      - name: 🧩 Validate the stack scaffold (scaffold.sh)
+        # Scaffold every stack with and without tenancy in throwaway copies and check
+        # what each leaves: no markers, the stack renamed, tenancy kept or removed,
+        # template-only files gone and kept out by .templatesyncignore. Validate
+        # Stacks then builds and runs the results.
+        run: sh scripts/scaffold.test.sh
       - name: 🤖 Validate scaffolded agent instructions
         # These files become tenant-owned immediately after creation, so a stale
         # trust or promotion rule cannot be repaired by template sync later.
@@ -513,7 +520,7 @@ jobs:
   # admission, just not in this offline gate.
   admissibility:
     name: Platform Admissibility
-    if: github.repository == 'devantler-tech/platform-tenant-template'
+    if: github.repository_id == '1253884448'
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkouts
@@ -1078,7 +1085,7 @@ jobs:
   # stays template-only like the other scaffold gates.
   pod-security-admission:
     name: Pod Security and tenant RBAC
-    if: github.repository == 'devantler-tech/platform-tenant-template'
+    if: github.repository_id == '1253884448'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1118,7 +1125,7 @@ jobs:
     needs: [validate-scaffold, admissibility, pod-security-admission]
     if: >-
       !cancelled()
-      && github.repository == 'devantler-tech/platform-tenant-template'
+      && github.repository_id == '1253884448'
       && github.ref == 'refs/heads/main'
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
@@ -1131,7 +1138,7 @@ jobs:
           egress-policy: audit
       - name: 📣 Open or update the drift issue
         if: needs.validate-scaffold.result != 'success' || needs.admissibility.result != 'success' || needs.pod-security-admission.result != 'success'
-        uses: devantler-tech/.github/actions/upsert-issue@a76d5df9371cf712a8f60307fde060825a34cf35 # v21.3.4
+        uses: devantler-tech/.github/actions/upsert-issue@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
         with:
           title: "Scheduled scaffold validation is failing on main"
           body: |
@@ -1145,7 +1152,7 @@ jobs:
             Read the failing step's message first: a check that could not evaluate its input names that as its cause, separately from a policy verdict. This issue is updated by every failing scheduled run and closed by the next passing one.
       - name: ✅ Close the drift issue
         if: needs.validate-scaffold.result == 'success' && needs.admissibility.result == 'success' && needs.pod-security-admission.result == 'success'
-        uses: devantler-tech/.github/actions/upsert-issue@a76d5df9371cf712a8f60307fde060825a34cf35 # v21.3.4
+        uses: devantler-tech/.github/actions/upsert-issue@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
         with:
           title: "Scheduled scaffold validation is failing on main"
           open: "false"

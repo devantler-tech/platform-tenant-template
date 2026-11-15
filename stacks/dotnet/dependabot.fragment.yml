@@ -1,0 +1,13 @@
+# This stack's Dependabot entries. scripts/scaffold.sh appends the list below to
+# .github/dependabot.yml; this file is never a Dependabot configuration of its own.
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    cooldown:
+      default-days: 7
