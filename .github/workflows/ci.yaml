@@ -162,6 +162,7 @@ jobs:
           path: ${{ runner.temp }}/queue-proof.txt
           if-no-files-found: error
           retention-days: 1
+          overwrite: true # replace only this slot's disposable receipt on rerun
   release-queue-receipts:
     name: Release queue receipts
     runs-on: ubuntu-latest
@@ -176,8 +177,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" |
-            jq -e '[.[] | .jobs[] | select(.name | startswith("Release queue proof ("))] as $jobs |
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=all&per_page=100" |
+            jq -e --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+              '[.[] | .jobs[] | select(.name | startswith("Release queue proof (")) | select(.run_attempt <= $attempt)] |
+              group_by(.name) | map(max_by([.run_attempt, .id])) as $jobs |
               ($jobs | length) == 3 and
               ([$jobs[].name] | sort) == ["Release queue proof (first)", "Release queue proof (second)", "Release queue proof (third)"] and
               all($jobs[]; .status == "completed" and .conclusion == "success")'

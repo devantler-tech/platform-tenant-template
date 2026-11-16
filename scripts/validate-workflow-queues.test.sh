@@ -79,4 +79,32 @@ if command -v actionlint >/dev/null 2>&1; then
 else
   fail 'actionlint is required for the independent compatibility control'
 fi
+# A failed-jobs rerun retains successful slots from earlier attempts. Exercise
+# the real receipt step with that API shape, including an older failed slot.
+mkdir "$scratch/bin"
+cat >"$scratch/bin/gh" <<'SH'
+#!/usr/bin/env bash
+case "${*: -1}" in
+  */jobs\?filter=all\&per_page=100) cat "$QUEUE_FIXTURES/jobs.json" ;;
+  */artifacts\?per_page=100) cat "$QUEUE_FIXTURES/artifacts.json" ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$scratch/bin/gh"
+yq -r '.jobs."release-queue-receipts".steps[0].run' "$root/.github/workflows/ci.yaml" >"$scratch/receipts.sh"
+jq -n '[{jobs: [
+  {id:1,name:"Release queue proof (first)",run_attempt:1,status:"completed",conclusion:"success"},
+  {id:2,name:"Release queue proof (second)",run_attempt:1,status:"completed",conclusion:"failure"},
+  {id:3,name:"Release queue proof (third)",run_attempt:1,status:"completed",conclusion:"success"},
+  {id:4,name:"Release queue proof (second)",run_attempt:2,status:"completed",conclusion:"success"}
+]}]' >"$scratch/jobs.json"
+jq -n '[{artifacts:["first","second","third"] | map({name:("release-queue-proof-" + .),expired:false,size_in_bytes:100})}]' >"$scratch/artifacts.json"
+receipt_check() {
+  PATH="$scratch/bin:$PATH" QUEUE_FIXTURES="$scratch" GITHUB_REPOSITORY=fixture/repo \
+    GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=2 bash -e -o pipefail "$scratch/receipts.sh"
+}
+receipt_check >/dev/null
+jq '.[0].jobs[-1].conclusion = "failure"' "$scratch/jobs.json" >"$scratch/changed.json"
+mv "$scratch/changed.json" "$scratch/jobs.json"
+if receipt_check >/dev/null 2>&1; then fail 'a failed latest slot reused an earlier result'; fi
 printf 'workflow queue tests: passed\n'
