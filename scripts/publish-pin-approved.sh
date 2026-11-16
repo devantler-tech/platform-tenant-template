@@ -60,7 +60,8 @@ publish_identity() {
 			and .jobs.publish.if == "github.repository_id != '\''1253884448'\''"
 			and .jobs.publish."runs-on" == "ubuntu-latest"
 			and .jobs.publish."timeout-minutes" == 60
-			and .jobs.publish.concurrency.group == "publish-${{ github.repository }}"
+			and (.jobs.publish.concurrency.group == "publish-${{ github.repository }}"
+				or .jobs.publish.concurrency.group == "publish-verified-${{ github.repository }}")
 			and .jobs.publish.concurrency."cancel-in-progress" == false
 			and (.jobs.publish.permissions | length) == 3
 			and .jobs.publish.permissions.contents == "read"
