@@ -52,6 +52,10 @@ jobs:
 
       # The shared lint job every non-Go application runs, on the fresh scaffold. The
       # runner temp directory is mounted at /github/runner_temp in the linter container.
+      - name: Validate scaffold concurrency queues
+        if: matrix.stack != 'go'
+        working-directory: ${{ env.APP }}
+        run: bash scripts/validate-workflow-queues.sh
       - name: 🧹 Lint the scaffold
         if: matrix.stack != 'go'
         uses: oxsecurity/megalinter/flavors/cupcake@f2fe8c1cba37091848df3e524066c8c23ef353ed # v10.2.0
@@ -59,7 +63,8 @@ jobs:
           DEFAULT_WORKSPACE: /github/runner_temp/demo-app
           VALIDATE_ALL_CODEBASE: true
           APPLY_FIXES: none
-          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality
+          # The preceding gate validates the field missing from released actionlint.
+          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality -ignore unexpected.key..queue..for..concurrency..section
 
       - name: ⚙️ Set up Go
         if: matrix.stack == 'go'
@@ -82,7 +87,7 @@ jobs:
 
       - name: 🧪 Build and test .NET
         if: matrix.stack == 'dotnet'
-        uses: devantler-tech/.github/actions/run-dotnet-tests@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
+        uses: devantler-tech/.github/actions/run-dotnet-tests@d70d50665465117f01104313e53057374a96a1a3 # v21.7.2
         with:
           working-directory: ${{ env.APP }}
           github-token: ""
@@ -138,7 +143,7 @@ jobs:
     steps:
       - name: 📊 Require every stack to pass
         id: checks
-        uses: devantler-tech/.github/actions/aggregate-job-checks@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
+        uses: devantler-tech/.github/actions/aggregate-job-checks@d70d50665465117f01104313e53057374a96a1a3 # v21.7.2
         with:
           check-workflow-startup: "true"
           job-results: ${{ join(needs.*.result, ' ') }}

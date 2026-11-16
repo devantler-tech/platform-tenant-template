@@ -80,7 +80,7 @@ the template excludes, add the line `!<entry>` to your list.
 
 | File | Purpose |
 |---|---|
-| `.github/workflows/cd.yaml` (*tenant*) | On a `v*` tag, calls `publish-app.yaml` to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact |
+| `.github/workflows/cd.yaml` (*tenant*) | On a `v*` tag, runs the `actions/publish-app` action to build, digest-pin, push, and **cosign-sign** the image + manifests OCI artifact as this repository |
 | `.github/workflows/release.yaml` | semantic-release on `main` (cuts the `v*` tags that drive `cd.yaml`) |
 | `.github/workflows/codeql.yaml` | Advanced CodeQL for the languages found in the repository, reading `.github/codeql/codeql-config.yml`; off until default setup is off and `CODEQL_SETUP=advanced` |
 | `.github/workflows/lint.yaml`, `.github/mega-linter.base.yml` | The shared MegaLinter job `ci.yaml` calls, and the base configuration `.mega-linter.yml` extends |
@@ -182,14 +182,14 @@ image, so their updates reach production on their own. GitHub Actions updates
 use the `ci` prefix (set in `.github/dependabot.yml`) and release nothing.
 Tenants own both files, so an existing tenant adds the `build(deps)` rule and
 the `ci` prefix itself.
-Each tag triggers `cd.yaml`, which calls the platform's
-[`publish-app.yaml`](https://github.com/devantler-tech/.github/blob/main/.github/workflows/publish-app.yaml)
-reusable workflow to build the image, **pin its digest into
-`deploy/deployment.yaml`**, push the manifests as an OCI artifact, and
-**cosign-sign** both. The platform's `OCIRepository` verifies that signature, so
-only artifacts from this trusted workflow are eligible for reconciliation after
-the platform has registered the tenant and its applicable publisher-approval
-checks pass. Workflow configuration alone does not prove that publication or
+Each tag triggers `cd.yaml`, which runs the
+[`actions/publish-app`](https://github.com/devantler-tech/.github/tree/main/actions/publish-app)
+action to build the image, **pin its digest into the app manifest**
+(`deploy/base/deployment.yaml` when it exists, else `deploy/deployment.yaml`),
+push the manifests as an OCI artifact, and **cosign-sign** both. The signature
+names this repository's own `cd.yaml` on the release tag, and the platform's
+`OCIRepository` trusts each registered tenant's own repository on release tags
+(ADR 0017), so a new action revision needs no platform approval. Workflow configuration alone does not prove that publication or
 reconciliation succeeded.
 
 Before moving a publisher between repositories, merge and template-sync the
@@ -220,7 +220,7 @@ schema. Digest selection must retain the immutable digest schema, and optional
 application reconciliation must default on and preserve its deletion guard.
 Static OCI references remain supported; conditional application reconciliation
 still requires the same source schema and safeguards with that reference form.
-The starter uses the maintained publisher at its reviewed minimum version.
+Tenants still on the shared publisher keep it at its reviewed minimum version.
 Its portable guard rejects a return to the retired catalogue, movable refs,
 older versions and version comments that do not match the immutable commit.
 The Platform approval and verification policy must be deployed before a live
@@ -232,9 +232,9 @@ frame validated by the portable approval check. It instantiates the generic
 Tenant's exact own-release rule with a fixed sample repository and release tag,
 then compares that producer with the decoded rule. A shared-only default or an
 explicit shared-publisher revision cannot authorize this producer. Execution
-environment overrides and branch publication remain refused. This offline
-compatibility check neither switches the starter's publisher nor proves that a
-real release was signed, admitted or reconciled.
+environment overrides and branch publication remain refused. The starter ships
+this caller. This offline check does not prove that a real release was signed,
+admitted or reconciled.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
@@ -267,7 +267,8 @@ Run these from the repository root. In every platform tenant, and in this templa
 kubectl kustomize deploy/                              # manifests build
 sh scripts/workflow-caller-pin-contract.test.sh       # portable tenant caller-pin contract (resolves the version-comment tag on github.com and compares it with the pinned commit)
 sh scripts/publish-pin-approved.test.sh               # publish-app pin approval check (reads a local approved set, never the network)
-actionlint .github/workflows/*                         # workflows parse
+bash scripts/validate-workflow-queues.sh               # validate the queue field unsupported by released actionlint
+actionlint -ignore code-quality -ignore 'unexpected.key..queue..for..concurrency..section' .github/workflows/* # every other workflow diagnostic stays active
 ```
 
 Additionally, in this template repository. A new tenant starts with these
@@ -279,6 +280,7 @@ sh scripts/scaffold.test.sh                           # stack and tenancy scaffo
 sh scripts/rename-placeholders.test.sh                # onboarding contract
 sh scripts/agent-instructions.test.sh                 # agent safety contract
 sh scripts/workflow-caller-contract.test.sh           # template-only caller/scaffold contract
+bash scripts/validate-workflow-queues.test.sh           # queue validation and independent actionlint control
 sh scripts/tenant-ci-contract.test.sh                 # tenant delivery-input CI contract
 sh scripts/pod-security-admission-contract.test.sh    # Pod Security workflow contract
 sh scripts/tenant-rbac-contract.test.sh               # Platform tenant RBAC workflow contract
@@ -286,6 +288,12 @@ sh scripts/platform-tenant-envelope-contract.test.sh  # live Platform tenant-env
 sh scripts/platform-network-floor-contract.test.sh    # generated Platform network-floor contract
 sh scripts/platform-vpa-floor-contract.test.sh        # generated Platform VPA-floor contract
 ```
+
+Publication jobs use `queue: max` with cancellation disabled so a later release
+keeps its place. Until released actionlint understands that field, the shared
+lint workflow validates its allowed values and cancellation rules before using
+the narrow compatibility rule above. Template CI also runs three jobs in one
+native concurrency group and requires all three to finish successfully.
 
 The live tenant-envelope check requires `kro` ownership on the controller-created
 Namespace and ServiceAccount; the manual registration retains `ksail` ownership.

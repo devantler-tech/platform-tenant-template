@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
-      group: publish-${{ github.repository }}
+      group: publish-verified-${{ github.repository }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -32,7 +32,7 @@ jobs:
           persist-credentials: false
       - name: 📦 Publish signed application
         id: publish
-        uses: devantler-tech/.github/actions/publish-app@3cab796adef97dcde0c55724866a0b19397aba39 # v21.6.2
+        uses: devantler-tech/.github/actions/publish-app@d70d50665465117f01104313e53057374a96a1a3 # v21.7.2
         with:
           app-name: ${{ github.event.repository.name }}
           app-manifest: ${{ hashFiles('deploy/base/deployment.yaml') != '' && 'base/deployment.yaml' || 'deployment.yaml' }}

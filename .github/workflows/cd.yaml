@@ -10,30 +10,30 @@ permissions: {}
 jobs:
   publish:
     name: Publish
-    # Skipped in the template repo itself (it ships no app); runs in every tenant
-    # created from this template. The template is matched by its repository ID,
-    # which survives the rename from platform-tenant-template to application-template.
+    # The upstream template has no application to publish; its ID survives renames.
     if: github.repository_id != '1253884448'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: publish-verified-${{ github.repository }}
+      queue: max
+      cancel-in-progress: false
     permissions:
-      contents: read # checkout
-      packages: write # push image + manifests OCI artifact
-      id-token: write # keyless cosign signing (via GitHub OIDC)
-    uses: devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812 # v19.0.5
-    with:
-      # publish-app pins the freshly built image digest into the container with
-      # this name in deploy/deployment.yaml. Keep that container's name equal to
-      # the repository name (the platform's signed-publish convention).
-      app-name: ${{ github.event.repository.name }}
-      # The signature this publish mints carries the `uses:` ref above in its
-      # certificate. Platform has independently approved this exact maintained
-      # revision for manifests, admission and node pulls. Other maintained
-      # revisions, tags and branches fail closed; a full SHA alone does not
-      # grant approval. The guard below checks only that the ref is a commit
-      # SHA, so an unapproved SHA still publishes, but its artifact never
-      # verifies in-cluster and the tenant silently stops reconciling. Get the
-      # new revision approved in Platform before changing this pin.
-      #
-      # Enabling the guard adds the producer-side half: the publish refuses to
-      # sign at all, before the build, so a tag or branch ref surfaces here as a failed
-      # release instead of as an artifact the cluster quietly rejects.
-      enable-caller-pin: true
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: 🔒 Harden runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - name: 📥 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: 📦 Publish signed application
+        id: publish
+        uses: devantler-tech/.github/actions/publish-app@d70d50665465117f01104313e53057374a96a1a3 # v21.7.2
+        with:
+          app-name: ${{ github.event.repository.name }}
+          app-manifest: ${{ hashFiles('deploy/base/deployment.yaml') != '' && 'base/deployment.yaml' || 'deployment.yaml' }}
