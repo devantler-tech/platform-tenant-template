@@ -189,7 +189,7 @@ for manifest in deployment.yaml base/deployment.yaml; do
 	fi
 done
 for mutation in \
-	'.jobs.publish.concurrency.group = "publish-${{ github.repository }}"' \
+	".jobs.publish.concurrency.group = \"publish-\${{ github.repository }}\"" \
 	'.env.BASH_ENV = "publisher-hook.sh"' \
 	'.defaults.run.shell = "bash -e {0}"' \
 	'.jobs.publish.steps[2].uses = "other-owner/repo/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' \
