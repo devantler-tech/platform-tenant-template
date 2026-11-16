@@ -267,7 +267,8 @@ Run these from the repository root. In every platform tenant, and in this templa
 kubectl kustomize deploy/                              # manifests build
 sh scripts/workflow-caller-pin-contract.test.sh       # portable tenant caller-pin contract (resolves the version-comment tag on github.com and compares it with the pinned commit)
 sh scripts/publish-pin-approved.test.sh               # publish-app pin approval check (reads a local approved set, never the network)
-actionlint .github/workflows/*                         # workflows parse
+bash scripts/validate-workflow-queues.sh               # validate the queue field unsupported by released actionlint
+actionlint -ignore code-quality -ignore 'unexpected.key..queue..for..concurrency..section' .github/workflows/* # every other workflow diagnostic stays active
 ```
 
 Additionally, in this template repository. A new tenant starts with these
@@ -279,6 +280,7 @@ sh scripts/scaffold.test.sh                           # stack and tenancy scaffo
 sh scripts/rename-placeholders.test.sh                # onboarding contract
 sh scripts/agent-instructions.test.sh                 # agent safety contract
 sh scripts/workflow-caller-contract.test.sh           # template-only caller/scaffold contract
+bash scripts/validate-workflow-queues.test.sh           # queue validation and independent actionlint control
 sh scripts/tenant-ci-contract.test.sh                 # tenant delivery-input CI contract
 sh scripts/pod-security-admission-contract.test.sh    # Pod Security workflow contract
 sh scripts/tenant-rbac-contract.test.sh               # Platform tenant RBAC workflow contract
@@ -286,6 +288,12 @@ sh scripts/platform-tenant-envelope-contract.test.sh  # live Platform tenant-env
 sh scripts/platform-network-floor-contract.test.sh    # generated Platform network-floor contract
 sh scripts/platform-vpa-floor-contract.test.sh        # generated Platform VPA-floor contract
 ```
+
+Publication jobs use `queue: max` with cancellation disabled so a later release
+keeps its place. Until released actionlint understands that field, the shared
+lint workflow validates its allowed values and cancellation rules before using
+the narrow compatibility rule above. Template CI also runs three jobs in one
+native concurrency group and requires all three to finish successfully.
 
 The live tenant-envelope check requires `kro` ownership on the controller-created
 Namespace and ServiceAccount; the manual registration retains `ksail` ownership.
