@@ -52,6 +52,10 @@ jobs:
 
       # The shared lint job every non-Go application runs, on the fresh scaffold. The
       # runner temp directory is mounted at /github/runner_temp in the linter container.
+      - name: Validate scaffold concurrency queues
+        if: matrix.stack != 'go'
+        working-directory: ${{ env.APP }}
+        run: bash scripts/validate-workflow-queues.sh
       - name: 🧹 Lint the scaffold
         if: matrix.stack != 'go'
         uses: oxsecurity/megalinter/flavors/cupcake@f2fe8c1cba37091848df3e524066c8c23ef353ed # v10.2.0
@@ -59,7 +63,8 @@ jobs:
           DEFAULT_WORKSPACE: /github/runner_temp/demo-app
           VALIDATE_ALL_CODEBASE: true
           APPLY_FIXES: none
-          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality
+          # The preceding gate validates the field missing from released actionlint.
+          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality -ignore unexpected.key..queue..for..concurrency..section
 
       - name: ⚙️ Set up Go
         if: matrix.stack == 'go'

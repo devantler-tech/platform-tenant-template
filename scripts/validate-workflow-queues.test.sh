@@ -79,6 +79,38 @@ if command -v actionlint >/dev/null 2>&1; then
 else
   fail 'actionlint is required for the independent compatibility control'
 fi
+# Exercise the scaffold matrix's committed compatibility arguments, not a copy
+# of them: that entry point must validate queues before its linter ignores the
+# unsupported field, and retain unrelated syntax diagnostics.
+write_fixture
+scaffold_workflow="$root/.github/workflows/validate-stacks.yaml"
+scaffold_arguments=$(yq -r '.jobs.stack.steps[] | select(.uses // "" | contains("oxsecurity/megalinter/")) | .env.ACTION_ACTIONLINT_ARGUMENTS' "$scaffold_workflow")
+read -r -a scaffold_lint_arguments <<<"$scaffold_arguments"
+actionlint "${scaffold_lint_arguments[@]}" "$fixture"
+yq -o=json '.jobs.stack.steps' "$scaffold_workflow" | jq -e '
+  to_entries as $steps |
+  [$steps[] | select(.value.run // "" | contains("validate-workflow-queues.sh"))] as $guards |
+  [$steps[] | select(.value.uses // "" | contains("oxsecurity/megalinter/"))] as $linters |
+  ($guards | length) == 1 and ($linters | length) == 1 and
+  $guards[0].key < $linters[0].key and
+  $guards[0].value.if == $linters[0].value.if and
+  $guards[0].value."working-directory" == "${{ env.APP }}"
+' >/dev/null || fail 'the scaffold compatibility rule lacks its preceding queue gate'
+yq -r '.jobs.stack.steps[] | select(.run // "" | contains("validate-workflow-queues.sh")) | .run' "$scaffold_workflow" >"$scratch/scaffold-guard.sh"
+mkdir -p "$scratch/scripts"
+cp "$root/scripts/validate-workflow-queues.sh" "$scratch/scripts/"
+scaffold_check() { (cd "$scratch" && bash -e -o pipefail "$scratch/scaffold-guard.sh"); }
+scaffold_check
+yq -i '.jobs.publish.concurrency.queue = "typo"' "$fixture"
+if scaffold_check >"$scratch/out" 2>&1; then fail 'the scaffold queue gate accepted an invalid policy'; fi
+grep -q 'workflow queues: invalid' "$scratch/out" || fail 'the scaffold gate failed for the wrong reason'
+write_fixture
+yq -i '.jobs.publish.concurrency.bogus = "typo"' "$fixture"
+scaffold_check
+if actionlint "${scaffold_lint_arguments[@]}" "$fixture" >"$scratch/lint" 2>&1; then
+  fail 'the scaffold compatibility arguments hid an unrelated concurrency typo'
+fi
+grep -q 'unexpected key "bogus"' "$scratch/lint" || fail 'the scaffold linter failed for the wrong reason'
 # A failed-jobs rerun retains successful slots from earlier attempts. Exercise
 # the real receipt step with that API shape, including an older failed slot.
 mkdir "$scratch/bin"
