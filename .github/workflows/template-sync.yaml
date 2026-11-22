@@ -23,7 +23,7 @@ jobs:
       pull-requests: write
     uses: devantler-tech/.github/.github/workflows/template-sync.yaml@cc156a3693019fdbe9817c46f1a91cd50a124695 # v21.7.3
     with:
-      source-repo-path: devantler-tech/platform-tenant-template
+      source-repo-path: devantler-tech/application-template
       use-app-token: true
       # Adds the entries of this template's .templatesyncignore that a tenant's copy lacks,
       # so an exclusion added here also reaches tenants created before it (#171).
