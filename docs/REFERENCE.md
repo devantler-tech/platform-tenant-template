@@ -114,6 +114,7 @@ never re-synced, so a tenant still carrying these from an older sync can delete 
 | `scripts/platform-tenant-envelope*.test.sh` | Binds the template's signed publisher and those workload-level models to Platform's live KRO and manual tenant registrations: credential-free GHCR pull, cosign-verifying OCI source, managed Pod Security namespace, `tenant-edit` ServiceAccount binding, Flux source/impersonation/target namespace, and the exact OpenBao policy and Kubernetes-auth role that let the renamed tenant read and seed only its own app secrets |
 | `scripts/platform-network-floor*.test.sh` | Binds Platform's generated default-deny, DNS, and standard NetworkPolicy floor to the scaffold's required Gateway, namespace, CNPG, Kubernetes API, and DNS paths, reporting a check that cannot read its input separately from a policy verdict |
 | `scripts/platform-vpa-floor*.test.sh` | Uses Kyverno to evaluate Platform's Deployment GeneratingPolicy and keeps the scaffold's initial CPU request at or above the generated VPA floor, with mutation coverage |
+| `scripts/validate-workflow-queues.test.sh` | Exercises `scripts/validate-workflow-queues.sh` on valid and invalid publication queues, checks that the scaffold matrix and the tenancy CI job run it before actionlint's narrow queue rule, and replays the template's release-queue receipts. The validator itself stays template-owned and syncs, because the shared `lint.yaml` and tenant CI run it |
 
 **Yours (list these in `.templatesyncignore`):**
 
@@ -156,6 +157,7 @@ scripts/platform-network-floor.test.sh
 scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh
 scripts/platform-vpa-floor-contract.test.sh
+scripts/validate-workflow-queues.test.sh
 .github/workflows/validate-scaffold.yaml
 
 # Only without --tenancy: the tenant plumbing the scaffold removed.
@@ -164,6 +166,7 @@ renovate.json
 scripts/publish-pin-approved.sh
 scripts/publish-pin-approved.test.sh
 scripts/workflow-caller-pin-contract.test.sh
+scripts/fixtures/own-publisher.yaml
 ```
 
 `AGENTS.md` and the `maintain` skill ship as scaffolding (a starting point for new

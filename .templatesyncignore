@@ -14,8 +14,9 @@
 # Template-owned files: .github/workflows/{release,template-sync,stale-issues,codeql,lint}.yaml,
 # .github/mega-linter.base.yml, .coderabbit.yaml, .markdownlint.json, .yamllint.yml, CLAUDE.md,
 # docs/REFERENCE.md, zizmor.yml and, for a platform tenant, .github/workflows/cd.yaml, renovate.json,
-# scripts/workflow-caller-pin-contract.test.sh and scripts/publish-pin-approved.sh
-# (+ its test). Where a shared file has an app-owned overlay (.mega-linter.yml
+# scripts/workflow-caller-pin-contract.test.sh, scripts/publish-pin-approved.sh
+# (+ its test) and the scripts/fixtures/own-publisher.yaml they read. Where a
+# shared file has an app-owned overlay (.mega-linter.yml
 # extends .github/mega-linter.base.yml; codeql.yaml reads
 # .github/codeql/codeql-config.yml), change the overlay to diverge, not the shared
 # file. An application scaffolded without --tenancy lists the tenant files below, so
@@ -67,6 +68,7 @@ scripts/platform-network-floor.test.sh
 scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh
 scripts/platform-vpa-floor-contract.test.sh
+scripts/validate-workflow-queues.test.sh
 .github/workflows/validate-scaffold.yaml
 
 # --- The scaffold and its stacks (template-only; scripts/scaffold.sh removes them) ---
