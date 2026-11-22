@@ -93,9 +93,13 @@ yq -o=json '.jobs.stack.steps' "$scaffold_workflow" | jq -e '
   [$steps[] | select(.value.uses // "" | contains("oxsecurity/megalinter/"))] as $linters |
   ($guards | length) == 1 and ($linters | length) == 1 and
   $guards[0].key < $linters[0].key and
-  $guards[0].value.if == $linters[0].value.if and
+  ($guards[0].value | has("if") | not) and
   $guards[0].value."working-directory" == "${{ env.APP }}"
-' >/dev/null || fail 'the scaffold compatibility rule lacks its preceding queue gate'
+' >/dev/null || fail 'the scaffold compatibility rule lacks its preceding queue gate for every stack'
+# Go tenants drop the lint job, so the tenancy job must gate cd.yaml's queue itself.
+yq -o=json '.jobs."workflow-caller-pins".steps' "$root/.github/workflows/ci.yaml" | jq -e '
+  [.[] | select((.run // "") == "bash scripts/validate-workflow-queues.sh") | select(has("if") | not)] | length == 1
+' >/dev/null || fail 'the tenancy job lacks its unconditional queue gate'
 yq -r '.jobs.stack.steps[] | select(.run // "" | contains("validate-workflow-queues.sh")) | .run' "$scaffold_workflow" >"$scratch/scaffold-guard.sh"
 mkdir -p "$scratch/scripts"
 cp "$root/scripts/validate-workflow-queues.sh" "$scratch/scripts/"

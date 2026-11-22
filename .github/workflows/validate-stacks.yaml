@@ -52,8 +52,8 @@ jobs:
 
       # The shared lint job every non-Go application runs, on the fresh scaffold. The
       # runner temp directory is mounted at /github/runner_temp in the linter container.
+      # Every stack, Go included: a Go scaffold drops the lint job but keeps cd.yaml's queue.
       - name: Validate scaffold concurrency queues
-        if: matrix.stack != 'go'
         working-directory: ${{ env.APP }}
         run: bash scripts/validate-workflow-queues.sh
       - name: 🧹 Lint the scaffold

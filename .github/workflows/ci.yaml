@@ -53,6 +53,9 @@ jobs:
           persist-credentials: false
       - name: 📌 Validate reusable workflow caller pins
         run: sh scripts/workflow-caller-pin-contract.test.sh
+      # Go tenants drop the lint job, so cd.yaml's publication queue is checked here for every stack.
+      - name: Validate concurrency queues
+        run: bash scripts/validate-workflow-queues.sh
       # template:begin
       - name: Install released actionlint for the compatibility control
         run: |
