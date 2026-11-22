@@ -35,7 +35,8 @@ scripts/pod-security-admission.test.sh scripts/pod-security-admission-contract.t
 scripts/tenant-rbac.test.sh scripts/tenant-rbac-contract.test.sh
 scripts/platform-tenant-envelope.test.sh scripts/platform-tenant-envelope-contract.test.sh
 scripts/platform-network-floor.test.sh scripts/platform-network-floor-contract.test.sh
-scripts/platform-vpa-floor.test.sh scripts/platform-vpa-floor-contract.test.sh'
+scripts/platform-vpa-floor.test.sh scripts/platform-vpa-floor-contract.test.sh
+scripts/validate-workflow-queues.test.sh'
 tenant_only='deploy Dockerfile renovate.json .github/workflows/cd.yaml scripts/publish-pin-approved.sh
 scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh
 scripts/fixtures/own-publisher.yaml'
