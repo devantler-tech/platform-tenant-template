@@ -64,7 +64,7 @@ toolchain meeting its `go.mod`, or the .NET SDK its `global.json` names) or Dock
 token, cloud account or cluster is needed. This scaffolds a Go tenant in a throwaway copy:
 
 ```sh
-git clone --depth 1 https://github.com/devantler-tech/platform-tenant-template.git demo-app
+git clone --depth 1 https://github.com/devantler-tech/application-template.git demo-app
 cd demo-app
 rm -rf .git
 scripts/scaffold.sh go --tenancy
@@ -80,7 +80,7 @@ To improve this upstream template, follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Create an application
 
-Creation is currently blocked until [#211](https://github.com/devantler-tech/platform-tenant-template/issues/211)
+Creation is currently blocked until [#211](https://github.com/devantler-tech/application-template/issues/211)
 enables this repository as a GitHub template. Trying it locally and contributing still work.
 
 1. **Create the repository from this template.** This is an organization write, not local
