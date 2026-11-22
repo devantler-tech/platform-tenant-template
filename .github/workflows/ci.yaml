@@ -53,6 +53,24 @@ jobs:
           persist-credentials: false
       - name: 📌 Validate reusable workflow caller pins
         run: sh scripts/workflow-caller-pin-contract.test.sh
+      # Go tenants drop the lint job, so cd.yaml's publication queue is checked here for every stack.
+      - name: Validate concurrency queues
+        run: bash scripts/validate-workflow-queues.sh
+      # template:begin
+      - name: Install released actionlint for the compatibility control
+        run: |
+          archive="${RUNNER_TEMP}/actionlint.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check --status
+          mkdir -p "${RUNNER_TEMP}/actionlint-bin"
+          tar -xzf "$archive" --directory "${RUNNER_TEMP}/actionlint-bin" actionlint
+          echo "${RUNNER_TEMP}/actionlint-bin" >>"$GITHUB_PATH"
+        shell: bash
+      - name: Test concurrency queue validation
+        run: bash scripts/validate-workflow-queues.test.sh
+      # template:end
 
   # Validates the two tenant-owned artifacts that CD publishes: the image and deploy/.
   delivery-inputs:
@@ -118,6 +136,65 @@ jobs:
           sh "${RUNNER_TEMP}/publish-pin-approved.sh" "${RUNNER_TEMP}/base-cd.yaml" .github/workflows/cd.yaml
   # tenancy:end
 
+  # template:begin
+  release-queue-proof:
+    name: Release queue proof (${{ matrix.slot }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [first, second, third]
+    concurrency:
+      group: release-queue-proof-${{ github.run_id }}-${{ github.run_attempt }}
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Hold the publication slot while the other jobs queue
+        env:
+          SLOT: ${{ matrix.slot }}
+        run: |
+          sleep 15
+          printf '%s\n' "$SLOT" >"${RUNNER_TEMP}/queue-proof.txt"
+        shell: bash
+      - name: Publish the disposable queue receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-queue-proof-${{ matrix.slot }}
+          path: ${{ runner.temp }}/queue-proof.txt
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true # replace only this slot's disposable receipt on rerun
+  release-queue-receipts:
+    name: Release queue receipts
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    needs: [release-queue-proof]
+    permissions:
+      actions: read # native workflow-run metadata only
+    if: ${{ always() }}
+    steps:
+      - name: Require all three native publication slots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=all&per_page=100" |
+            jq -e --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+              '[.[] | .jobs[] | select(.name | startswith("Release queue proof (")) | select(.run_attempt <= $attempt)] |
+              group_by(.name) | map(max_by([.run_attempt, .id])) as $jobs |
+              ($jobs | length) == 3 and
+              ([$jobs[].name] | sort) == ["Release queue proof (first)", "Release queue proof (second)", "Release queue proof (third)"] and
+              all($jobs[]; .status == "completed" and .conclusion == "success")'
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" |
+            jq -e '[.[] | .artifacts[] | select(.name | startswith("release-queue-proof-"))] as $artifacts |
+              ([$artifacts[].name] | sort) == ["release-queue-proof-first", "release-queue-proof-second", "release-queue-proof-third"] and
+              all($artifacts[]; .expired == false and .size_in_bytes > 0)'
+        shell: bash
+  # template:end
+
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
@@ -127,6 +204,10 @@ jobs:
       - workflow-caller-pins # tenancy
       - delivery-inputs # tenancy
       - publish-pin-approved # tenancy
+      # template:begin
+      - release-queue-proof
+      - release-queue-receipts
+      # template:end
     permissions:
       actions: read # native workflow-run metadata only
     if: ${{ always() }}

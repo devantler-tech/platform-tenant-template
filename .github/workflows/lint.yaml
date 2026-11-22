@@ -25,11 +25,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Validate concurrency queues before the compatibility rule
+        run: bash scripts/validate-workflow-queues.sh
       # Read-only: a finding a linter could fix still fails the job, so fix it locally.
       - name: 🧹 MegaLinter
         uses: oxsecurity/megalinter/flavors/cupcake@f2fe8c1cba37091848df3e524066c8c23ef353ed # v10.2.0
         env:
           VALIDATE_ALL_CODEBASE: true
           APPLY_FIXES: none
-          # actionlint in MegaLinter does not know the newer `code-quality` permission yet.
-          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality
+          # The preceding gate validates queue values and non-cancellation. Released
+          # actionlint lacks that field; every unrelated diagnostic remains active.
+          ACTION_ACTIONLINT_ARGUMENTS: -ignore code-quality -ignore unexpected.key..queue..for..concurrency..section

@@ -188,15 +188,17 @@ for manifest in deployment.yaml base/deployment.yaml; do
 		failures=$((failures + 1))
 	fi
 done
-PUBLISH_GROUP="publish-verified-\${{ github.repository }}" \
-	yq eval '.jobs.publish.concurrency.group = strenv(PUBLISH_GROUP)' \
-	"$work/own.yaml" >"$work/compatible-group.yaml"
-if sh "$subject" "$work/base.yaml" "$work/compatible-group.yaml" >"$work/result" 2>&1; then
-	pass=$((pass + 1))
-else
-	printf 'FAIL: shared-publisher serialization group refused\n' >&2
-	failures=$((failures + 1))
-fi
+for group in publish publish-verified; do
+	PUBLISH_GROUP="$group-\${{ github.repository }}" \
+		yq eval '.jobs.publish.concurrency.group = strenv(PUBLISH_GROUP)' \
+		"$work/own.yaml" >"$work/compatible-group.yaml"
+	if sh "$subject" "$work/base.yaml" "$work/compatible-group.yaml" >"$work/result" 2>&1; then
+		pass=$((pass + 1))
+	else
+		printf 'FAIL: supported publisher serialization group refused: %s\n' "$group" >&2
+		failures=$((failures + 1))
+	fi
+done
 for mutation in \
 	'.jobs.publish.concurrency.group = "unrelated"' \
 	'.env.BASH_ENV = "publisher-hook.sh"' \

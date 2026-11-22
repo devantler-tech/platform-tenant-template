@@ -488,8 +488,8 @@ jobs:
   # published digest, which needs registry access and a real signed image. The
   # scaffold's placeholder tag is neither, so applying them here could only ever
   # produce a false failure. Tenant images earn their signature at publish time —
-  # `cd.yaml` calls the shared `publish-app.yaml`, whose keyless signing identity
-  # is what `verify-app-images` accepts — so provenance is enforced in CD and at
+  # `cd.yaml` runs the `actions/publish-app` action, whose keyless signing identity
+  # (this repository's own `cd.yaml` on a release tag) is what `verify-app-images` accepts — so provenance is enforced in CD and at
   # admission, just not in this offline gate.
   admissibility:
     name: Platform Admissibility
