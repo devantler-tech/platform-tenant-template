@@ -3,7 +3,7 @@
 Help make starting an application safer and easier: improve a confusing explanation,
 an example manifest, a stack under `stacks/` or a focused scaffold check. Discuss
 substantial work in an
-[issue](https://github.com/devantler-tech/platform-tenant-template/issues) first.
+[issue](https://github.com/devantler-tech/application-template/issues) first.
 This guide is for the **public upstream template**, not an application's own repository.
 Generated repositories own this guide and should replace it with their process.
 Their own `.templatesyncignore` must contain `CONTRIBUTING.md` to protect it.
@@ -16,7 +16,7 @@ See the [ownership reference](docs/REFERENCE.md#what-the-template-owns-vs-what-y
 
 Do not put credentials, private application details or sensitive vulnerabilities in
 a public issue or PR. Use this repository's private
-[Report a vulnerability](https://github.com/devantler-tech/platform-tenant-template/security/advisories/new)
+[Report a vulnerability](https://github.com/devantler-tech/application-template/security/advisories/new)
 form for sensitive security reports.
 
 ## Make a first upstream change
@@ -30,12 +30,12 @@ toolchain: a Go toolchain meeting `stacks/go/go.mod` and golangci-lint v2.14, or
 .NET SDK `stacks/dotnet/global.json` names. No App key, cloud account, private
 tenant checkout or production Kubernetes context is required.
 
-Fork `devantler-tech/platform-tenant-template` on GitHub, replace `YOUR-LOGIN`
+Fork `devantler-tech/application-template` on GitHub, replace `YOUR-LOGIN`
 with your login, and work from your fork:
 
 ```sh
-git clone https://github.com/YOUR-LOGIN/platform-tenant-template.git
-cd platform-tenant-template
+git clone https://github.com/YOUR-LOGIN/application-template.git
+cd application-template
 git switch -c docs/first-contribution
 ```
 
@@ -81,7 +81,7 @@ git commit -S -m "docs: clarify application onboarding"
 git push -u origin docs/first-contribution
 ```
 
-Open a **draft** PR to `devantler-tech/platform-tenant-template:main` using the
+Open a **draft** PR to `devantler-tech/application-template:main` using the
 inherited [PR template](https://github.com/devantler-tech/.github/blob/main/.github/PULL_REQUEST_TEMPLATE.md).
 Use a Conventional Commit title. Keep Why/What focused on the reader-facing
 problem and outcome, link the issue for substantial work, and put detailed
