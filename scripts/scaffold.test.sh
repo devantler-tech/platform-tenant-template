@@ -37,7 +37,8 @@ scripts/platform-tenant-envelope.test.sh scripts/platform-tenant-envelope-contra
 scripts/platform-network-floor.test.sh scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh scripts/platform-vpa-floor-contract.test.sh'
 tenant_only='deploy Dockerfile renovate.json .github/workflows/cd.yaml scripts/publish-pin-approved.sh
-scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh'
+scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh
+scripts/fixtures/own-publisher.yaml'
 
 # ignored <ignore-file> <path> — the path, or its directory form, is a line of the ignore file.
 ignored() {
@@ -130,8 +131,11 @@ check_plain() {
 	for path in $tenant_only .dockerignore; do
 		[ ! -e "$dir/$path" ] || fail "$label: tenant $path was not removed"
 	done
+	# The tenant pin tests were the fixture's only readers, so its directory goes with it.
+	[ ! -e "$dir/scripts/fixtures" ] || fail "$label: the emptied scripts/fixtures/ was not removed"
 	for path in .github/workflows/cd.yaml renovate.json scripts/publish-pin-approved.sh \
-		scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh; do
+		scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh \
+		scripts/fixtures/own-publisher.yaml; do
 		ignored "$dir/.templatesyncignore" "$path" ||
 			fail "$label: .templatesyncignore does not keep the removed $path out"
 	done

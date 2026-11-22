@@ -164,6 +164,7 @@ renovate.json
 scripts/publish-pin-approved.sh
 scripts/publish-pin-approved.test.sh
 scripts/workflow-caller-pin-contract.test.sh
+scripts/fixtures/own-publisher.yaml
 ```
 
 `AGENTS.md` and the `maintain` skill ship as scaffolding (a starting point for new
