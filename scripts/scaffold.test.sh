@@ -37,9 +37,7 @@ scripts/platform-tenant-envelope.test.sh scripts/platform-tenant-envelope-contra
 scripts/platform-network-floor.test.sh scripts/platform-network-floor-contract.test.sh
 scripts/platform-vpa-floor.test.sh scripts/platform-vpa-floor-contract.test.sh
 scripts/validate-workflow-queues.test.sh'
-tenant_only='deploy Dockerfile renovate.json .github/workflows/cd.yaml scripts/publish-pin-approved.sh
-scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh
-scripts/fixtures/own-publisher.yaml'
+tenant_only='deploy Dockerfile renovate.json .github/workflows/cd.yaml'
 
 # ignored <ignore-file> <path> — the path, or its directory form, is a line of the ignore file.
 ignored() {
@@ -109,7 +107,7 @@ check_tenancy() {
 	for path in $tenant_only; do
 		[ -e "$dir/$path" ] || fail "$label: tenant $path is missing"
 	done
-	yq eval -e '.jobs."delivery-inputs" and .jobs."publish-pin-approved" and .jobs."workflow-caller-pins"' \
+	yq eval -e '.jobs."delivery-inputs" and .jobs."workflow-queues"' \
 		"$dir/.github/workflows/ci.yaml" >/dev/null || fail "$label: the tenant CI gates are missing"
 	yq eval -e '[.updates[] | select(."package-ecosystem" == "docker")] | length == 1' \
 		"$dir/.github/dependabot.yml" >/dev/null || fail "$label: the image's Dependabot entry is missing"
@@ -132,11 +130,7 @@ check_plain() {
 	for path in $tenant_only .dockerignore; do
 		[ ! -e "$dir/$path" ] || fail "$label: tenant $path was not removed"
 	done
-	# The tenant pin tests were the fixture's only readers, so its directory goes with it.
-	[ ! -e "$dir/scripts/fixtures" ] || fail "$label: the emptied scripts/fixtures/ was not removed"
-	for path in .github/workflows/cd.yaml renovate.json scripts/publish-pin-approved.sh \
-		scripts/publish-pin-approved.test.sh scripts/workflow-caller-pin-contract.test.sh \
-		scripts/fixtures/own-publisher.yaml; do
+	for path in .github/workflows/cd.yaml renovate.json; do
 		ignored "$dir/.templatesyncignore" "$path" ||
 			fail "$label: .templatesyncignore does not keep the removed $path out"
 	done

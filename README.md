@@ -113,10 +113,7 @@ Default PR CI always builds the tenant image and renders `deploy/` before merge,
 secrets or write authority. Keep the `delivery-inputs` job and its entry in
 `ci-required-checks` when you change the stack job. This catches the same image and manifest
 failures in the pull request that introduced them instead of during release or reconciliation.
-Keep the `publish-pin-approved` job and its entry too: it refuses a `cd.yaml` that leaves the
-minimal tag-only, credential-free frame your releases are signed in, and it still holds back a
-move back to a shared publisher revision the platform has not approved for your tenant. An application scaffolded without
-`--tenancy` has neither job.
+An application scaffolded without `--tenancy` has no such job.
 
 After authorized App setup and platform registration, eligible Conventional Commits can produce
 tags that trigger the signed publishing pipeline. Neither a local render nor the presence of

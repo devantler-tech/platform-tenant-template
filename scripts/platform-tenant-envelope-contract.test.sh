@@ -91,7 +91,8 @@ validate_contract() {
 		'tenant-edit' \
 		'imagePullSecrets' \
 		'matchOIDCIdentity' \
-		'publish-app.yaml' \
+		'own_release_tail' \
+		'actions/publish-app' \
 		'serviceAccountName' \
 		'sourceRef' \
 		'targetNamespace' \
@@ -230,7 +231,8 @@ run_mutation "SecretStore managed namespace context removed" \
 run_mutation "SOPS variant validation removed" '' '/kustomizationSops/d'
 run_mutation "target namespace validation removed" '' '/targetNamespace/d'
 run_mutation "credential-free artifact validation removed" '' '/ghcrAuth/d'
-run_mutation "signed publisher validation removed" '' '/publish-app\.yaml/d'
+run_mutation "signed publisher validation removed" '' '/actions\/publish-app/d'
+run_mutation "own-release rule validation removed" '' '/own_release_tail/d'
 run_mutation "OpenBao authorization validation removed" '' \
 	'/validate_openbao_authorization/d'
 run_mutation "publisher baseline invocation removed" '' \

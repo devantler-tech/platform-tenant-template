@@ -136,7 +136,7 @@ validate_contract() {
 		and ((.jobs."ci-required-checks".needs | sort | join(",")) == ([.jobs | keys | .[] | select(. != "ci-required-checks")] | sort | join(",")))
 	'
 	assert_ci "required-check aggregate must depend on the tenant delivery jobs" '
-		[.jobs."ci-required-checks".needs[] | select(. == "workflow-caller-pins" or . == "delivery-inputs" or . == "publish-pin-approved")] | length == 3
+		[.jobs."ci-required-checks".needs[] | select(. == "workflow-queues" or . == "delivery-inputs")] | length == 2
 	'
 	# shellcheck disable=SC2016
 	assert_ci "required-check aggregate must run after every result" \
@@ -183,42 +183,6 @@ validate_contract() {
 			and .shell == "bash"
 			and ((keys | sort | join(",")) == "if,name,run,shell")
 		)] | length == 1
-	'
-
-	# The publish-pin approval gate (#207): a new tenant inherits it without editing ci.yaml.
-	assert_ci "publish-pin job must retain its stable identity" \
-		'.jobs."publish-pin-approved".name == "Publish pin approved"'
-	assert_ci "publish-pin job must have only audited keys" \
-		'(.jobs."publish-pin-approved" | keys | sort | join(",")) == "name,permissions,runs-on,steps"'
-	assert_ci "publish-pin job must have contents-read only" \
-		'(.jobs."publish-pin-approved".permissions | length) == 1 and .jobs."publish-pin-approved".permissions.contents == "read"'
-	assert_ci "publish-pin job must contain exactly the audited steps" \
-		'(.jobs."publish-pin-approved".steps | length) == 4'
-	assert_ci "publish-pin job must not reference repository secrets" '
-		(.jobs."publish-pin-approved" | to_json | contains("secrets") | not)
-	'
-	assert_ci "publish-pin checkout must be pinned, credential-free and carry the base commit" '
-		(.jobs."publish-pin-approved".steps[1].uses | test("^actions/checkout@[0-9a-f]{40}$"))
-		and .jobs."publish-pin-approved".steps[1].with."persist-credentials" == false
-		and .jobs."publish-pin-approved".steps[1].with."fetch-depth" == 0
-	'
-	assert_ci "publish-pin job must test the check unconditionally" '
-		.jobs."publish-pin-approved".steps[2].run == "sh scripts/publish-pin-approved.test.sh"
-		and ((.jobs."publish-pin-approved".steps[2] | keys | sort | join(",")) == "name,run")
-	'
-	# The check is skipped only in the template repository, which is not a registered tenant.
-	# shellcheck disable=SC2016
-	assert_ci "publish-pin check must run the base branch copy in every tenant" '
-		(.jobs."publish-pin-approved".steps[3] | keys | sort | join(",")) == "env,if,name,run"
-		and .jobs."publish-pin-approved".steps[3].if == "github.repository_id != '\''1253884448'\''"
-		and .jobs."publish-pin-approved".steps[3].env.BASE_SHA == "${{ github.event.pull_request.base.sha }}"
-		and (.jobs."publish-pin-approved".steps[3].run | contains("if [ -z \"${BASE_SHA}\" ]; then"))
-		and (.jobs."publish-pin-approved".steps[3].run | contains("git show \"${BASE_SHA}:scripts/publish-pin-approved.sh\" >\"${RUNNER_TEMP}/publish-pin-approved.sh\""))
-		and (.jobs."publish-pin-approved".steps[3].run | contains("git show \"${BASE_SHA}:.github/workflows/cd.yaml\" >\"${RUNNER_TEMP}/base-cd.yaml\""))
-		and (.jobs."publish-pin-approved".steps[3].run | contains("sh \"${RUNNER_TEMP}/publish-pin-approved.sh\" \"${RUNNER_TEMP}/base-cd.yaml\" .github/workflows/cd.yaml"))
-	'
-	assert_ci "publish-pin steps must fail closed" '
-		[.jobs."publish-pin-approved".steps[] | select(has("continue-on-error"))] | length == 0
 	'
 
 	# shellcheck disable=SC2016
@@ -373,53 +337,27 @@ run_mutation "job permissions broadened" \
 run_mutation "delivery dependency removed from aggregate" \
 	'.jobs."ci-required-checks".needs = ["stack"]'
 run_mutation "delivery dependency replaced with duplicate" \
-	'.jobs."ci-required-checks".needs = ["stack", "workflow-caller-pins", "publish-pin-approved", "stack"]'
+	'.jobs."ci-required-checks".needs = ["stack", "workflow-queues", "stack"]'
 run_mutation "dependency listed twice" \
 	'.jobs."ci-required-checks".needs += ["stack"]' '' '' '' '' '' \
 	'depend on every other job exactly once'
-run_mutation "workflow caller pin dependency removed from aggregate" \
-	'.jobs."ci-required-checks".needs = ["stack", "delivery-inputs", "publish-pin-approved"]'
-run_mutation "publish-pin dependency removed from aggregate" \
-	'.jobs."ci-required-checks".needs = ["workflow-caller-pins", "stack", "delivery-inputs"]'
+run_mutation "workflow queue dependency removed from aggregate" \
+	'.jobs."ci-required-checks".needs = ["stack", "delivery-inputs"]'
 run_mutation "stack dependency removed from aggregate" \
-	'.jobs."ci-required-checks".needs = ["workflow-caller-pins", "delivery-inputs", "publish-pin-approved"]' '' '' '' '' '' \
+	'.jobs."ci-required-checks".needs = ["workflow-queues", "delivery-inputs"]' '' '' '' '' '' \
 	'depend on every other job exactly once'
 run_mutation "new job left out of the aggregate" \
 	'.jobs."unaggregated-check" = {"name": "Unaggregated check", "runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}' '' '' '' '' '' \
 	'depend on every other job exactly once'
-run_mutation "publish-pin job removed" \
-	'del(.jobs."publish-pin-approved")'
-run_mutation "publish-pin check step removed" \
-	'del(.jobs."publish-pin-approved".steps[3])'
-run_mutation "publish-pin check tests removed" \
-	'del(.jobs."publish-pin-approved".steps[2])'
-run_mutation "publish-pin check skipped in every repository" \
-	'.jobs."publish-pin-approved".steps[3].if = "false"'
-run_mutation "publish-pin check skipped in a tenant" \
-	'.jobs."publish-pin-approved".steps[3].if = "github.repository_id == '\''1253884448'\''"'
-run_mutation "publish-pin check judged by the head copy" \
-	'.jobs."publish-pin-approved".steps[3].run = "sh scripts/publish-pin-approved.sh base.yaml .github/workflows/cd.yaml"'
 # shellcheck disable=SC2016
-run_mutation "publish-pin base cd.yaml read from the head" \
-	'.jobs."publish-pin-approved".steps[3].run |= sub("git show \"\$\{BASE_SHA\}:.github/workflows/cd.yaml\"", "cat .github/workflows/cd.yaml")'
-run_mutation "publish-pin empty-base guard removed" \
-	'.jobs."publish-pin-approved".steps[3].run |= sub("if \[ -z ", "if false && [ -z ")'
-run_mutation "publish-pin check allowed to fail" \
-	'.jobs."publish-pin-approved".steps[3]."continue-on-error" = true'
-run_mutation "publish-pin job made conditional" \
-	'.jobs."publish-pin-approved".if = "github.actor == '\''devantler'\''"'
-# shellcheck disable=SC2016
-run_mutation "publish-pin result removed from aggregate" \
-	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.stack.result }} ${{ needs.delivery-inputs.result }} ${{ needs.workflow-caller-pins.result }}"'
-# shellcheck disable=SC2016
-run_mutation "publish-pin result guard removed" \
+run_mutation "skipped result guard removed" \
 	'.jobs."ci-required-checks".steps[1].if = "${{ contains(needs.*.result, '\''failure'\'') || contains(needs.*.result, '\''cancelled'\'') }}"'
 # The GitHub expression is mutation data, not a shell expansion.
 # shellcheck disable=SC2016
 run_mutation "delivery result removed from aggregate" \
 	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.stack.result }}"'
 # shellcheck disable=SC2016
-run_mutation "workflow caller pin result removed from aggregate" \
+run_mutation "workflow queue result removed from aggregate" \
 	'.jobs."ci-required-checks".steps[0].with."job-results" = "${{ needs.stack.result }} ${{ needs.delivery-inputs.result }}"'
 # shellcheck disable=SC2016
 run_mutation "delivery results coerced before aggregation" \

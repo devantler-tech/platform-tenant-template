@@ -24,9 +24,8 @@ form for sensitive security reports.
 You need Git, a POSIX shell and standard Unix tools, kubectl with built-in
 Kustomize, [Mike Farah's yq v4](https://mikefarah.gitbook.io/yq/), jq,
 [actionlint](https://github.com/rhysd/actionlint), and a working Docker engine for
-the image check. The caller-pin tests read public GitHub tags over HTTPS, and
-Docker may download the public base image. To change a stack, also install its
-toolchain: a Go toolchain meeting `stacks/go/go.mod` and golangci-lint v2.14, or the
+the image check. Docker may download the public base image. To change a stack,
+also install its toolchain: a Go toolchain meeting `stacks/go/go.mod` and golangci-lint v2.14, or the
 .NET SDK `stacks/dotnet/global.json` names. No App key, cloud account, private
 tenant checkout or production Kubernetes context is required.
 

@@ -37,8 +37,8 @@ jobs:
   # lint:end
 
   # tenancy:begin
-  workflow-caller-pins:
-    name: Workflow caller pins
+  workflow-queues:
+    name: Workflow queues
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -51,8 +51,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: 📌 Validate reusable workflow caller pins
-        run: sh scripts/workflow-caller-pin-contract.test.sh
       # Go tenants drop the lint job, so cd.yaml's publication queue is checked here for every stack.
       - name: Validate concurrency queues
         run: bash scripts/validate-workflow-queues.sh
@@ -96,44 +94,6 @@ jobs:
         shell: bash
         working-directory: .
 
-  # A dependency PR that moves the publish-app.yaml pin to a revision the platform has not approved
-  # for this tenant would ship a release the platform refuses to deploy, so this job fails the move
-  # here instead. An unchanged pin passes without contacting the platform. The template repository
-  # itself is not a registered tenant, so it runs the check's tests but skips the check.
-  publish-pin-approved:
-    name: Publish pin approved
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: 🔒 Harden runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
-        with:
-          egress-policy: audit
-      - name: 📥 Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: 🧪 Test the publish pin check
-        run: sh scripts/publish-pin-approved.test.sh
-      - name: 📌 Refuse an unapproved publish-app pin
-        # The template repository, matched by its ID so the guard survives renames.
-        if: github.repository_id != '1253884448'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          # An empty base would turn `git show ":path"` into an index read, comparing the head with
-          # itself and passing without checking anything.
-          if [ -z "${BASE_SHA}" ]; then
-            echo "::error::No base commit to compare the publish-app pin against."
-            exit 1
-          fi
-          # Run the check as it exists on the base branch: a PR must not be able to weaken the check
-          # that judges it.
-          git show "${BASE_SHA}:scripts/publish-pin-approved.sh" >"${RUNNER_TEMP}/publish-pin-approved.sh"
-          git show "${BASE_SHA}:.github/workflows/cd.yaml" >"${RUNNER_TEMP}/base-cd.yaml"
-          sh "${RUNNER_TEMP}/publish-pin-approved.sh" "${RUNNER_TEMP}/base-cd.yaml" .github/workflows/cd.yaml
   # tenancy:end
 
   # template:begin
@@ -201,9 +161,8 @@ jobs:
     needs:
       - stack
       - lint # lint
-      - workflow-caller-pins # tenancy
+      - workflow-queues # tenancy
       - delivery-inputs # tenancy
-      - publish-pin-approved # tenancy
       # template:begin
       - release-queue-proof
       - release-queue-receipts
