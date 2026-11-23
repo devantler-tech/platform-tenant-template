@@ -13,5 +13,10 @@ updates:
       npm:
         patterns:
           - "*"
+    ignore:
+      # svelte-check and typescript-eslint declare a TypeScript peer range below 7, so a
+      # TypeScript 7 update cannot install. Remove this once both accept TypeScript 7.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
     cooldown:
       default-days: 7
