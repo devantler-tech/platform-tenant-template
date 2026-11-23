@@ -87,7 +87,7 @@ jobs:
 
       - name: 🧪 Build and test .NET
         if: matrix.stack == 'dotnet'
-        uses: devantler-tech/.github/actions/run-dotnet-tests@cc156a3693019fdbe9817c46f1a91cd50a124695 # v21.7.3
+        uses: devantler-tech/.github/actions/run-dotnet-tests@722d9bd7bd8636a0da9c7a9e63f2e7259e46ede2 # v21.12.8
         with:
           working-directory: ${{ env.APP }}
           github-token: ""
@@ -143,7 +143,7 @@ jobs:
     steps:
       - name: 📊 Require every stack to pass
         id: checks
-        uses: devantler-tech/.github/actions/aggregate-job-checks@cc156a3693019fdbe9817c46f1a91cd50a124695 # v21.7.3
+        uses: devantler-tech/.github/actions/aggregate-job-checks@722d9bd7bd8636a0da9c7a9e63f2e7259e46ede2 # v21.12.8
         with:
           check-workflow-startup: "true"
           job-results: ${{ join(needs.*.result, ' ') }}

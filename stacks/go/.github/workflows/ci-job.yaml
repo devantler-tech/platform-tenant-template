@@ -8,7 +8,7 @@ jobs:
   stack:
     name: Go
     # The shared validator builds, tests, lints, scans and measures coverage.
-    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@cc156a3693019fdbe9817c46f1a91cd50a124695 # v21.7.3
+    uses: devantler-tech/.github/.github/workflows/validate-go-project.yaml@722d9bd7bd8636a0da9c7a9e63f2e7259e46ede2 # v21.12.8
     permissions:
       contents: read
       pull-requests: write # lint summaries; no branch-writing token on candidate runners
