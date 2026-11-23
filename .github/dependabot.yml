@@ -22,34 +22,15 @@ updates:
     commit-message:
       prefix: "ci"
       include: "scope"
-    # The workflow-caller contract requires the maintained release and template-sync callers
-    # to share one commit. Dependabot treats each reusable workflow as its own dependency, so
-    # UNGROUPED it opens one PR per caller (#156, #157 and #158 each touched exactly one file) —
-    # and every one of those lands with the other two still behind, failing that assertion in
-    # required CI. No merge order rescues it: the first caller updated always disagrees with the
-    # rest. Grouping advances the callers in one PR. The publish-app action moves with them: it signs as
+    # The devantler-tech callers (release, template-sync and, for a tenant, the publish-app
+    # action) move together in one PR instead of one PR each. The publish-app action signs as
     # this repository, so a new revision needs no Platform approval (ADR 0017).
     groups:
       devantler-tech-actions:
         patterns:
           - "devantler-tech/*"
       # A group applies to EITHER version updates or security updates, never both, and the key
-      # above defaults to `version-updates`, so this second group is what covers advisories at all.
-      # It is a best-effort improvement, NOT a guarantee, and must not be read as one: a security
-      # group combines only the dependencies that actually HAVE an advisory, so if one caller is
-      # affected and the others are not, Dependabot still opens a partial bump. The guarantee comes
-      # nowhere automatic. Such a partial PR fails the shared-commit assertion, and NOTHING in this
-      # repository detects that and repairs it — there is no coordinating workflow, and the
-      # contract test does not assert one. The escalation is therefore MANUAL and is stated here so
-      # it is not mistaken for an automated guarantee:
-      #   trigger — required CI fails on a Dependabot PR at the shared-commit assertion;
-      #   actor   — the maintaining engineer (agent or human): per AGENTS.md a bot PR that cannot
-      #             finish on its own is ordinary work, not something left to the bot;
-      #   action  — convert that PR to draft, disable auto-merge, and move the remaining callers to
-      #             the same reviewed SHA on the bot's branch; the adapted head then needs the normal
-      #             exact-head review before it merges.
-      # Until that is automated, an advisory lands only when someone performs this. Automating it is
-      # issue #167; do not read the group above as covering it.
+      # above defaults to `version-updates`, so this second group is what groups advisories.
       devantler-tech-actions-security:
         applies-to: security-updates
         patterns:

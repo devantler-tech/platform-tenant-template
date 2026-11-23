@@ -13,10 +13,8 @@
 # devantler-tech/application-template, never by editing them in an application.
 # Template-owned files: .github/workflows/{release,template-sync,stale-issues,codeql,lint}.yaml,
 # .github/mega-linter.base.yml, .coderabbit.yaml, .markdownlint.json, .yamllint.yml, CLAUDE.md,
-# docs/REFERENCE.md, zizmor.yml and, for a platform tenant, .github/workflows/cd.yaml, renovate.json,
-# scripts/workflow-caller-pin-contract.test.sh, scripts/publish-pin-approved.sh
-# (+ its test) and the scripts/fixtures/own-publisher.yaml they read. Where a
-# shared file has an app-owned overlay (.mega-linter.yml
+# docs/REFERENCE.md, zizmor.yml and, for a platform tenant, .github/workflows/cd.yaml and
+# renovate.json. Where a shared file has an app-owned overlay (.mega-linter.yml
 # extends .github/mega-linter.base.yml; codeql.yaml reads
 # .github/codeql/codeql-config.yml), change the overlay to diverge, not the shared
 # file. An application scaffolded without --tenancy lists the tenant files below, so

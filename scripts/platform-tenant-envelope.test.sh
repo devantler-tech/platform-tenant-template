@@ -6,72 +6,30 @@ set -eu
 script_dir=$(CDPATH='' cd -P -- "$(dirname -- "$0")" && pwd)
 repo_root=$(dirname -- "$script_dir")
 publish_workflow=$repo_root/.github/workflows/cd.yaml
-# Shape, not a specific revision: the producer identity and the requirement that
-# it stay SHA-pinned are the contract; which SHA is Dependabot's business.
-expected_publish_workflow='^devantler-tech/(actions|\.github)/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
-# This is the literal GitHub Actions expression the reusable workflow consumes.
-# shellcheck disable=SC2016
-expected_publish_app_name='${{ github.event.repository.name }}'
 expected_oidc_issuer='^https://token\.actions\.githubusercontent\.com$'
-# The generic KRO rule may retain its existing legacy full-SHA pattern, but any
-# maintained publisher must name one or two literal reviewed commits. The
-# starter's complete pinned caller identity must match this rule.
+# Flux follows only stable X.Y.Z releases when a range carries this filter.
+stable_semver_filter='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+# A yq predicate over an OCIRepository ref: a stable release range, optionally
+# narrowed by exactly that filter, with no digest or tag that would freeze or float it.
+# Inlined into each check: yq reads a boolean bound with `as $x` as false after `and`.
+stable_stream='((tag == "!!map") and (((keys | sort | join(",")) == "semver") or ((keys | sort | join(",")) == "semver,semverFilter")) and ((.semver | tag) == "!!str") and (.semver | test("^>=(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)$")) and ((has("semverFilter") | not) or .semverFilter == strenv(stable_semver_filter)))'
+# The starter's producer identity, set once its signing frame is validated.
 publisher_identity=''
-publisher_own_repository=''
-# A manually declared tenant's own OCIRepository is narrower: platform writes an
-# explicit alternation of its approved publish-app.yaml revisions (full 40-hex SHAs)
-# from scripts/publish-workflow-approved-revisions.tsv. Which SHAs is platform's
-# business; that the subject names only full SHAs, and no wildcard, is the contract.
-# The writer emits a legacy-only subject or a fully anchored pair of the legacy
-# and maintained locations. Parse those literal forms below, rather than treating
-# the subject itself as an executable regex or pinning one incidental text shape.
-#
-# Platform also trusts a tenant's OWN release workflow on a release tag
-# (platform#6303): one more alternative, written last inside the anchored group,
-# naming exactly the tenant's repository followed by this tail. The semver part
+# Platform trusts only a tenant's OWN release workflow on a release tag (ADR 0017,
+# platform#6303): the tenant's repository followed by this tail. The semver part
 # is the ksail release grammar, pre-releases included. Only this exact text is
 # recognised; any other own-release shape is rejected, never interpreted.
+own_release_prefix='^https://github\.com/devantler-tech/'
 own_release_tail='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
-export expected_publish_workflow expected_publish_app_name
-export expected_oidc_issuer
+# A fixed sample repository instantiates the generic Tenant's dynamic name.
+probe_repository=tenant-envelope-probe
+export expected_oidc_issuer stable_semver_filter
 
 # Report the failed invariant and stop the envelope check with a nonzero status.
 fail() {
 	echo "FAIL: $*" >&2
 	exit 1
 }
-
-# Require a bounded set of distinct, immutable, lowercase commit IDs.
-validate_revision_group() (
-	ref=$1
-	maximum=$2
-	minimum=1
-	case "$ref" in
-		'('*')') ref=${ref#\(}; ref=${ref%\)}; minimum=2 ;;
-		*'|'*) exit 1 ;;
-	esac
-	# No regex metacharacters survive: only distinct, literal full commit IDs.
-	printf '%s\n' "$ref" | awk -v minimum="$minimum" -v maximum="$maximum" '
-		{
-			count = split($0, revisions, "\\|")
-			if (count < minimum || count > maximum) exit 1
-			for (i = 1; i <= count; i++) {
-				if (length(revisions[i]) != 40 || revisions[i] !~ /^[0-9a-f]+$/ || seen[revisions[i]]++) exit 1
-			}
-		}
-		END { if (NR != 1) exit 1 }
-	'
-)
-
-# Only a generic legacy rule may retain the existing full-commit wildcard.
-validate_legacy_revision_group() (
-	ref=$1
-	scope=$2
-	if [ "$scope" = generic ] && [ "$ref" = '[0-9a-f]{40}' ]; then
-		exit 0
-	fi
-	validate_revision_group "$ref" 3
-)
 
 # Require an RFC 1123 DNS label: a repository name that needs no regex escape.
 # The character list is spelled out because a range such as a-z can match
@@ -86,54 +44,10 @@ validate_dns_label() (
 	esac
 )
 
-# Accept only the supported anchored app-publisher identities for this scope.
-# The optional third argument names the one repository whose own release
-# workflow may follow the shared publishers as the group's last alternative.
-validate_oidc_subject() (
-	subject=$1
-	scope=$2
-	own_repository=${3:-}
-	case "$scope" in manual|generic) ;; *) exit 1 ;; esac
-	prefix='^https://github\.com/devantler-tech/'
-	legacy='actions/\.github/workflows/publish-app\.yaml@'
-	canonical='\.github/\.github/workflows/publish-app\.yaml@'
-	if [ -n "$own_repository" ]; then
-		validate_dns_label "$own_repository" || exit 1
-		# Remove only the expected repository's exact alternative, and only as the
-		# last entry of the outer publisher group. Any other own-release text,
-		# including one inside a publisher's revision group, stays in the subject
-		# and fails the literal publisher forms below.
-		own_alternative="|$own_repository$own_release_tail)\$"
-		case "$subject" in
-			"$prefix("*"$own_alternative") subject=${subject%"$own_alternative"}')$' ;;
-		esac
-	fi
-	case "$subject" in
-		"$prefix$legacy"*'$')
-			ref=${subject#"$prefix$legacy"}
-			ref=${ref%'$'}
-			validate_legacy_revision_group "$ref" "$scope"
-			;;
-		"$prefix("*')$')
-			pair=${subject#"$prefix("}
-			pair=${pair%')$'}
-			separator="|$canonical"
-			case "$pair" in "$legacy"*"$separator"*) ;; *) exit 1 ;; esac
-			refs=${pair#"$legacy"}
-			legacy_ref=${refs%%"$separator"*}
-			canonical_ref=${refs#*"$separator"}
-			validate_legacy_revision_group "$legacy_ref" "$scope" && validate_revision_group "$canonical_ref" 2
-			;;
-		"$prefix$canonical"*'$')
-			# The generic rule names only the maintained publisher once the deleted
-			# legacy location is retired (platform#6264): one or two literal commits.
-			[ "$scope" = generic ] || exit 1
-			ref=${subject#"$prefix$canonical"}
-			ref=${ref%'$'}
-			validate_revision_group "$ref" 2
-			;;
-		*) exit 1 ;;
-	esac
+# Print the one anchored subject that trusts <repository>'s own release workflow.
+own_release_subject() (
+	validate_dns_label "$1" || exit 1
+	printf '%s%s%s$\n' "$own_release_prefix" "$1" "$own_release_tail"
 )
 
 # Decode one CEL string literal as JSON, without evaluating CEL or treating its
@@ -144,117 +58,80 @@ decode_cel_string() (
 	printf '%s' "$1" | jq -Rser 'fromjson | select(type == "string") | select(test("[[:space:][:cntrl:]]") | not)'
 )
 
-# Select either arm of the supported publisher expression without executing CEL.
-# The optional revision represents a TenantSource input in producer controls;
-# authorization of a live tenant's caller remains the separate publisher-pin gate.
-generic_default_subject() (
+# Read the generic Tenant's subject without executing CEL. The only accepted
+# expression joins two literals around the regex-escaped Tenant name: the
+# organization prefix before it, the own-release tail and end anchor after it.
+# Print that rule instantiated for the fixed probe repository.
+# The CEL delimiters below are literal text, never shell expansions.
+# shellcheck disable=SC2016
+generic_own_release_subject() (
 	subject=$1
-	rgd=$2
-	publisher_revision=${3:-}
-	own_repository=${4:-}
-	own_subject=''
-	conditional_subject=0
-	# shellcheck disable=SC2016
-	prefix='${schema.spec.source.publisherRevision == "" ? '
-	# shellcheck disable=SC2016
-	suffix=' : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
-	# The default arm may also trust the tenant's own release workflow
-	# (platform#6303). CEL then joins two literals around the regex-escaped
-	# tenant name; this is the only expression accepted between them.
-	own_name_expression=' + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + '
+	name_expression=' + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + '
 	case "$subject" in
-		"$prefix"*"$suffix")
-			conditional_subject=1
-			# A full immutable revision is the only input the explicit arm may
-			# interpolate. Approval is still the separate publisher-pin gate.
-			yq eval -e '.spec.schema.types.TenantSource.publisherRevision == "string | default=\"\" maxLength=40 pattern=\"^$|^[0-9a-f]{40}$\""' "$rgd" >/dev/null || exit 1
-			encoded=${subject#"$prefix"}
-			encoded=${encoded%"$suffix"}
-			case "$encoded" in
-				*"$own_name_expression"*)
-					shared_encoded=${encoded%%"$own_name_expression"*}
-					own_encoded=${encoded#*"$own_name_expression"}
-					shared=$(decode_cel_string "$shared_encoded") || exit 1
-					own=$(decode_cel_string "$own_encoded") || exit 1
-					# The literal after the name is exactly the own-release tail and
-					# the end of the group, so nothing can follow the tenant's tag.
-					[ "$own" = "$own_release_tail)\$" ] || exit 1
-					group_prefix='^https://github\.com/devantler-tech/('
-					case "$shared" in "$group_prefix"*'|') ;; *) exit 1 ;; esac
-					shared=${shared#"$group_prefix"}
-					shared=${shared%'|'}
-					# Before the name, only the maintained shared publisher may appear.
-					# Reduce it to that publisher alone, so the canonical form below
-					# still bounds its revisions and the starter caller still matches.
-					case "$shared" in '\.github/\.github/workflows/publish-app\.yaml@'*) ;; *) exit 1 ;; esac
-					subject='^https://github\.com/devantler-tech/'"$shared"'$'
-					if [ -n "$own_repository" ]; then
-						validate_dns_label "$own_repository" || exit 1
-						own_subject="$group_prefix$shared|$own_repository$own_release_tail)\$"
-					fi
-					;;
-				*)
-					subject=$(decode_cel_string "$encoded") || exit 1
-					;;
-			esac
-			;;
+		'${'*"$name_expression"*'}') ;;
+		*) exit 1 ;;
 	esac
-	validate_oidc_subject "$subject" generic || exit 1
-	if [ -n "$publisher_revision" ]; then
-		[ "$conditional_subject" -eq 1 ] || exit 1
-		validate_revision_group "$publisher_revision" 1 || exit 1
-		subject='^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@'"$publisher_revision"'$'
-	elif [ -n "$own_subject" ]; then
-		subject=$own_subject
-	fi
-	printf '%s\n' "$subject"
+	encoded=${subject#'${'}
+	encoded=${encoded%'}'}
+	before=$(decode_cel_string "${encoded%%"$name_expression"*}") || exit 1
+	after=$(decode_cel_string "${encoded#*"$name_expression"}") || exit 1
+	[ "$before" = "$own_release_prefix" ] || exit 1
+	[ "$after" = "$own_release_tail\$" ] || exit 1
+	own_release_subject "$probe_repository"
 )
 
-# Bind the tag-only publishing job to its immutable workflow and minimal authority.
+# Bind the tag-only publishing job to the minimal, credential-free frame its
+# own-release signature relies on: the signer is this repository's cd.yaml on a
+# release tag, whatever revision of the publish-app action it runs.
 validate_publish_workflow() {
 	workflow_file=$1
-	publisher_own_repository=''
 	[ -f "$workflow_file" ] || fail "tenant publish workflow is missing: $workflow_file"
 	yq eval-all -e '[.] | length == 1' "$workflow_file" >/dev/null ||
 		fail "tenant publish workflow must contain exactly one YAML document"
-	if yq eval -e '.jobs.publish | has("steps")' "$workflow_file" >/dev/null 2>&1; then
-		# Reuse the portable validator's tag-only, SHA-pinned execution frame.
-		# Its caller-pin companion separately verifies the catalogue tag binding.
-		sh "$script_dir/publish-pin-approved.sh" "$workflow_file" "$workflow_file" >/dev/null ||
-			fail "tenant publish workflow no longer has the minimal own-release signing contract"
-		# Instantiate the dynamic Tenant name with one fixed probe name. This
-		# exercises the decoded matcher, without evaluating CEL or claiming a
-		# real release was signed, admitted or reconciled.
-		publisher_own_repository=tenant-envelope-probe
-		publisher_identity=https://github.com/devantler-tech/tenant-envelope-probe/.github/workflows/cd.yaml@refs/tags/v1.2.3
-		return
-	fi
-
-	# The tag-only tenant job is the producer identity Platform's OCIRepository
-	# accepts. Keep its authority both minimal and immutable.
+	# Workflow-level env and defaults can also change the action's execution.
 	# shellcheck disable=SC2016
-	yq eval -e '
-		((.["on"] | length) == 1)
-		and (.["on"] | has("push"))
-		and ((.["on"].push | length) == 1)
-		and ((.["on"].push.tags | length) == 1)
+	publish_manifest_choice='${{ hashFiles('\''deploy/base/deployment.yaml'\'') != '\'''\'' && '\''base/deployment.yaml'\'' || '\''deployment.yaml'\'' }}' \
+		yq eval -e '
+		(keys - ["name", "on", "permissions", "jobs"] | length) == 0
+		and (.permissions | length) == 0
+		and (.["on"] | keys | join(",")) == "push"
+		and (.["on"].push | keys | join(",")) == "tags"
+		and (.["on"].push.tags | length) == 1
 		and .["on"].push.tags[0] == "v*"
-		and ((.permissions | length) == 0)
-		and ((.jobs | length) == 1)
-		and (.jobs | has("publish"))
+		and (.jobs | keys | join(",")) == "publish"
+		and (.jobs.publish | keys | sort | join(",")) == "concurrency,if,name,permissions,runs-on,steps,timeout-minutes"
 		and .jobs.publish.if == "github.repository_id != '\''1253884448'\''"
-		and ((.jobs.publish.permissions | length) == 3)
+		and .jobs.publish."runs-on" == "ubuntu-latest"
+		and .jobs.publish."timeout-minutes" == 60
+		and (.jobs.publish.concurrency.group == "publish-${{ github.repository }}"
+			or .jobs.publish.concurrency.group == "publish-verified-${{ github.repository }}")
+		and .jobs.publish.concurrency."cancel-in-progress" == false
+		and (.jobs.publish.permissions | length) == 3
 		and .jobs.publish.permissions.contents == "read"
 		and .jobs.publish.permissions.packages == "write"
 		and .jobs.publish.permissions."id-token" == "write"
-		and (.jobs.publish.uses | tag == "!!str")
-		and (.jobs.publish.uses | test("[[:space:][:cntrl:]]") | not)
-		and (.jobs.publish.uses | test(strenv(expected_publish_workflow)))
-		and .jobs.publish.with."app-name" == strenv(expected_publish_app_name)
-		and .jobs.publish.with."enable-caller-pin" == true
+		and (.jobs.publish.steps | length) == 3
+		and (.jobs.publish.steps[0] | keys | sort | join(",")) == "name,uses,with"
+		and (.jobs.publish.steps[0].uses | test("^step-security/harden-runner@[0-9a-f]{40}$"))
+		and (.jobs.publish.steps[0].with | length) == 1
+		and .jobs.publish.steps[0].with."egress-policy" == "audit"
+		and (.jobs.publish.steps[1] | keys | sort | join(",")) == "name,uses,with"
+		and (.jobs.publish.steps[1].uses | test("^actions/checkout@[0-9a-f]{40}$"))
+		and (.jobs.publish.steps[1].with | length) == 1
+		and .jobs.publish.steps[1].with."persist-credentials" == false
+		and (.jobs.publish.steps[2] | keys | sort | join(",")) == "id,name,uses,with"
+		and .jobs.publish.steps[2].id == "publish"
+		and (.jobs.publish.steps[2].uses | test("^devantler-tech/[.]github/actions/publish-app@[0-9a-f]{40}$"))
+		and (.jobs.publish.steps[2].with | keys | sort | join(",")) == "app-manifest,app-name"
+		and .jobs.publish.steps[2].with."app-name" == "${{ github.event.repository.name }}"
+		and (.jobs.publish.steps[2].with."app-manifest" == "base/deployment.yaml"
+			or .jobs.publish.steps[2].with."app-manifest" == "deployment.yaml"
+			or .jobs.publish.steps[2].with."app-manifest" == strenv(publish_manifest_choice))
 	' "$workflow_file" >/dev/null ||
-		fail "tenant publish workflow no longer has the pinned minimal signing contract"
-	publisher_identity="https://github.com/$(yq eval -r '.jobs.publish.uses' "$workflow_file")"
+		fail "tenant publish workflow no longer has the minimal own-release signing frame"
+	# This exercises the decoded matcher with a fixed sample release, without
+	# claiming a real release was signed, admitted or reconciled.
+	publisher_identity=https://github.com/devantler-tech/$probe_repository/.github/workflows/cd.yaml@refs/tags/v1.2.3
 }
 
 # Require the renamed tenant's exact OpenBao policy and Kubernetes-auth binding.
@@ -340,6 +217,7 @@ validate_openbao_authorization() (
 		fail "Platform tenant OpenBao role no longer binds the exact policy, ServiceAccount, and namespace"
 )
 
+
 # Check the real Platform envelope, including every source consumer's safeguards.
 validate_platform() {
 	platform_root=$1
@@ -379,8 +257,6 @@ validate_platform() {
 		| (.spec.resources[] | select(.id == "kustomizationSops")) as $kustomizationSopsResource
 		| $kustomizationResource.template as $kustomization
 		| $kustomizationSopsResource.template as $kustomizationSops
-		| (.spec.schema.types.TenantSource.digest == "string | default=\"\" maxLength=71 pattern=\"^$|^sha256:[0-9a-f]{64}$\""
-			and .spec.schema.spec.source == "TenantSource | default={} validation=\"((!has(self.digest) || self.digest == '\'''\'') == (!has(self.publisherRevision) || self.publisherRevision == '\'''\'')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != '\'''\''))\" validation=\"!has(oldSelf.digest) || oldSelf.digest == '\'''\'' || (has(self.digest) && self.digest != '\'''\'')\"") as $sourceSchemaValid
 		| (([.spec.resources[] | select(.id == "ghcrAuth")] | length) == 0
 		and ([.spec.resources[] | select(.id == "ociRepository")] | length) == 1
 		and $namespace.kind == "Namespace"
@@ -397,11 +273,7 @@ validate_platform() {
 		and $ociRepository.kind == "OCIRepository"
 		and $ociRepository.metadata.name == "${schema.spec.name}"
 		and $ociRepository.metadata.namespace == "${tenantNamespace.metadata.name}"
-		and ((($ociRepository.spec.ref | tag) == "!!map"
-				and ($ociRepository.spec.ref | length) == 1
-				and $ociRepository.spec.ref.semver == ">=1.0.0")
-			or ($ociRepository.spec.ref == "${schema.spec.source.digest == \"\" ? {\"semver\": \">=1.0.0\"} : {\"digest\": schema.spec.source.digest}}"
-				and $sourceSchemaValid))
+		and ($ociRepository.spec.ref | '"$stable_stream"')
 		and $ociRepository.spec.url == "oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests"
 		and ($ociRepository.spec | has("secretRef") | not)
 		and ($ociRepository.spec | has("serviceAccountName") | not)
@@ -422,10 +294,8 @@ validate_platform() {
 		and $roleBinding.subjects[0].kind == "ServiceAccount"
 		and $roleBinding.subjects[0].name == "${serviceAccount.metadata.name}"
 		and $roleBinding.subjects[0].namespace == "${tenantNamespace.metadata.name}"
-		and (($kustomizationResource.includeWhen | join("|")) == "${!schema.spec.sops}"
-			or (($kustomizationResource.includeWhen | join("|")) == "${schema.spec.source.reconcileApplication && !schema.spec.sops}"
-				and $sourceSchemaValid
-				and .spec.schema.types.TenantSource.reconcileApplication == "boolean | default=true validation=\"self || !oldSelf\""))
+		and ($kustomizationResource.includeWhen | join("|")) == "${schema.spec.source.reconcileApplication && !schema.spec.sops}"
+		and .spec.schema.types.TenantSource.reconcileApplication == "boolean | default=true validation=\"self || !oldSelf\""
 		and $kustomization.kind == "Kustomization"
 		and $kustomization.metadata.namespace == "${tenantNamespace.metadata.name}"
 		and $kustomization.spec.serviceAccountName == "${serviceAccount.metadata.name}"
@@ -433,10 +303,7 @@ validate_platform() {
 		and $kustomization.spec.sourceRef.name == "${ociRepository.metadata.name}"
 		and ($kustomization.spec.sourceRef | has("namespace") | not)
 		and $kustomization.spec.targetNamespace == "${tenantNamespace.metadata.name}"
-		and (($kustomizationSopsResource.includeWhen | join("|")) == "${schema.spec.sops}"
-			or (($kustomizationSopsResource.includeWhen | join("|")) == "${schema.spec.source.reconcileApplication && schema.spec.sops}"
-				and $sourceSchemaValid
-				and .spec.schema.types.TenantSource.reconcileApplication == "boolean | default=true validation=\"self || !oldSelf\""))
+		and ($kustomizationSopsResource.includeWhen | join("|")) == "${schema.spec.source.reconcileApplication && schema.spec.sops}"
 		and $kustomizationSops.kind == "Kustomization"
 		and $kustomizationSops.metadata.namespace == "${tenantNamespace.metadata.name}"
 		and $kustomizationSops.spec.serviceAccountName == "${serviceAccount.metadata.name}"
@@ -446,8 +313,8 @@ validate_platform() {
 		and $kustomizationSops.spec.targetNamespace == "${tenantNamespace.metadata.name}")
 	' "$rgd" >/dev/null || fail "Platform KRO Tenant no longer provides the required namespace, RBAC, and Flux envelope"
 	generic_subject=$(yq eval -r '.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject' "$rgd")
-	generic_subject=$(generic_default_subject "$generic_subject" "$rgd" "${3:-}" "$publisher_own_repository") ||
-		fail "Platform KRO Tenant OCI subject is not an anchored app-publisher rule"
+	generic_subject=$(generic_own_release_subject "$generic_subject") ||
+		fail "Platform KRO Tenant OCI subject is not the anchored own-release rule"
 	[ -n "$publisher_identity" ] || fail "starter publisher must be validated before its Platform consumer"
 	printf '%s\n' "$publisher_identity" | grep -Eq -- "$generic_subject" ||
 		fail "Platform KRO Tenant does not accept the starter's exact pinned publisher"
@@ -482,9 +349,7 @@ validate_platform() {
 		.kind == "OCIRepository"
 		and .metadata.name == strenv(tenant_name)
 		and .metadata.namespace == strenv(tenant_name)
-		and .spec.ref.semver == ">=1.0.0"
-		and (.spec.ref | has("digest") | not)
-		and (.spec.ref | has("tag") | not)
+		and (.spec.ref | '"$stable_stream"')
 		and .spec.url == strenv(expected_manual_oci_url)
 		and (.spec | has("secretRef") | not)
 		and (.spec | has("serviceAccountName") | not)
@@ -497,10 +362,10 @@ validate_platform() {
 		and (.spec.verify.matchOIDCIdentity[0].subject | test("[[:space:][:cntrl:]]") | not)
 	' "$manual_oci_repository" >/dev/null || fail "manual Platform tenant OCI source no longer requires the signed artifact"
 	manual_subject=$(yq eval -r '.spec.verify.matchOIDCIdentity[0].subject' "$manual_oci_repository")
-	# The manual source may add only its own repository's release workflow, and
+	# The manual source trusts only its own repository's release workflow, and
 	# that repository is the tenant whose artifact path was bound above.
-	validate_oidc_subject "$manual_subject" manual "$tenant_name" ||
-		fail "manual Platform tenant OCI subject is not an anchored, narrow app-publisher writer form"
+	[ "$manual_subject" = "$(own_release_subject "$tenant_name")" ] ||
+		fail "manual Platform tenant OCI subject is not the anchored own-release rule for $tenant_name"
 
 	# shellcheck disable=SC2016
 	yq eval -e '
@@ -568,20 +433,6 @@ cp \
 	"$platform_root/k8s/bases/infrastructure/vault-config/job.yaml" \
 	"$baseline/k8s/bases/infrastructure/vault-config/job.yaml"
 
-# The starter signs as this repository. Platform still accepts the shared
-# reusable publisher while consumers move (ADR 0017), so the shared caller form
-# keeps its own baseline, derived from the starter's trigger and authority.
-shared_publish_workflow=$mutation_dir/shared-publisher-cd.yaml
-# shellcheck disable=SC2016
-yq eval '
-	del(.jobs.publish.steps, .jobs.publish."runs-on", .jobs.publish."timeout-minutes", .jobs.publish.concurrency)
-	| .jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"
-	| .jobs.publish.with = {"app-name": "${{ github.event.repository.name }}", "enable-caller-pin": true}
-' "$publish_workflow" > "$shared_publish_workflow"
-# A subshell keeps the starter's validated publisher identity in place.
-(validate_publish_workflow "$shared_publish_workflow") ||
-	fail "the shared publisher baseline no longer has the pinned minimal signing contract"
-
 # Counted, not hand-written — so that adding a mutation cannot leave the PASS
 # line overstating or understating coverage.
 #
@@ -617,9 +468,8 @@ run_publish_mutation() {
 	mutations_run=$((mutations_run + 1))
 	description=$1
 	mutation=$2
-	mutant_base=${3:-$publish_workflow}
 	mutant_workflow=$mutation_dir/cd-mutant.yaml
-	yq eval "$mutation" "$mutant_base" > "$mutant_workflow"
+	yq eval "$mutation" "$publish_workflow" > "$mutant_workflow"
 	if (validate_publish_workflow "$mutant_workflow") >/dev/null 2>&1; then
 		fail "publish mutation passed: $description"
 	fi
@@ -700,6 +550,7 @@ run_scaffold_mutation() {
 	fi
 }
 
+
 subject_controls_run=0
 # Compare a manual tenant's literal signer subject with its expected verdict.
 run_manual_subject_control() {
@@ -721,335 +572,139 @@ run_manual_subject_control() {
 	subject_controls_run=$((subject_controls_run + 1))
 }
 
-# These are literal writer shapes, exercised against a copy of the real Platform
-# envelope, not examples merely searched for in the implementation. Platform owns
-# the approved revisions; this check holds its serialization to narrow app-only
-# identities. Nothing here grants a new revision or changes the starter's caller.
-control_a=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-control_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-control_c=cccccccccccccccccccccccccccccccccccccccc
-control_d=dddddddddddddddddddddddddddddddddddddddd
+# The tenant's own release workflow on a release tag, written in its literal
+# parts so each loosened variant changes exactly one of them. These exercise
+# copies of the real Platform envelope, not examples searched for in the code.
 control_prefix='^https://github\.com/devantler-tech/'
-control_legacy='actions/\.github/workflows/publish-app\.yaml@'
-control_canonical='\.github/\.github/workflows/publish-app\.yaml@'
-run_manual_subject_control 'one legacy revision' \
-	"${control_prefix}${control_legacy}${control_a}\$" accept
-run_manual_subject_control 'two legacy revisions' \
-	"${control_prefix}${control_legacy}(${control_a}|${control_b})\$" accept
-run_manual_subject_control 'three legacy revisions' \
-	"${control_prefix}${control_legacy}(${control_a}|${control_b}|${control_c})\$" accept
-run_manual_subject_control 'both locations with one revision each' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$" accept
-run_manual_subject_control 'one legacy and two maintained revisions' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}(${control_c}|${control_d}))\$" accept
-run_manual_subject_control 'two legacy and two maintained revisions' \
-	"${control_prefix}(${control_legacy}(${control_a}|${control_b})|${control_canonical}(${control_c}|${control_d}))\$" accept
-run_manual_subject_control 'three legacy and two maintained revisions' \
-	"${control_prefix}(${control_legacy}(${control_a}|${control_b}|${control_c})|${control_canonical}(${control_c}|${control_d}))\$" accept
-run_manual_subject_control 'three legacy and one maintained revision' \
-	"${control_prefix}(${control_legacy}(${control_a}|${control_b}|${control_c})|${control_canonical}${control_d})\$" accept
-run_manual_subject_control 'two legacy and one maintained revision' \
-	"${control_prefix}(${control_legacy}(${control_a}|${control_b})|${control_canonical}${control_c})\$" accept
-run_manual_subject_control 'same SHA remains distinct across locations' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_a})\$" accept
-run_manual_subject_control 'maintained tag' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}v7.23.0)\$" reject
-run_manual_subject_control 'maintained branch' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}main)\$" reject
-run_manual_subject_control 'maintained short SHA' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}ccccccc)\$" reject
-run_manual_subject_control 'maintained wildcard' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}.*)\$" reject
-run_manual_subject_control 'third maintained revision' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}(${control_b}|${control_c}|${control_d}))\$" reject
-run_manual_subject_control 'duplicate maintained revision' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}(${control_b}|${control_b}))\$" reject
-run_manual_subject_control 'duplicate legacy revision' \
-	"${control_prefix}${control_legacy}(${control_a}|${control_a})\$" reject
-run_manual_subject_control 'four legacy revisions' \
-	"${control_prefix}${control_legacy}(${control_a}|${control_b}|${control_c}|${control_d})\$" reject
-run_manual_subject_control 'ungrouped locations' \
-	"${control_prefix}${control_legacy}${control_a}|${control_canonical}${control_b}\$" reject
-run_manual_subject_control 'different maintained workflow' \
-	"${control_prefix}(${control_legacy}${control_a}|\\.github/\\.github/workflows/publish-manifests\\.yaml@${control_b})\$" reject
-run_manual_subject_control 'different maintained repository' \
-	"${control_prefix}(${control_legacy}${control_a}|other/\\.github/workflows/publish-app\\.yaml@${control_b})\$" reject
-run_manual_subject_control 'unescaped maintained repository dots' \
-	"${control_prefix}(${control_legacy}${control_a}|.github/\\.github/workflows/publish-app\\.yaml@${control_b})\$" reject
-run_manual_subject_control 'missing pair end anchor' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})" reject
-run_manual_subject_control 'suffix after pair end anchor' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$junk" reject
-# Preserve the literal newline: command substitution would otherwise strip it.
-control_newline='
-'
-run_manual_subject_control 'trailing newline after pair end anchor' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$${control_newline}" reject
-run_manual_subject_control 'canonical-only form not emitted by writer' \
-	"${control_prefix}${control_canonical}${control_b}\$" reject
-# The tenant's own release workflow on a release tag (platform#6303), written in
-# its literal parts so each loosened variant changes exactly one of them.
 control_own_directory='/\.github/workflows/'
 control_own_file='[^/]+\.ya?ml'
 control_own_ref='@refs/tags/v'
 control_own_semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 control_own_tail=$control_own_directory$control_own_file$control_own_ref$control_own_semver
-control_shared_pair="${control_legacy}${control_a}|${control_canonical}${control_b}"
-run_manual_subject_control 'both locations and the tenant own release' \
-	"${control_prefix}(${control_shared_pair}|ascoachingogvaner${control_own_tail})\$" accept
+control_shared='\.github/\.github/workflows/publish-app\.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+# Preserve the literal newline: command substitution would otherwise strip it.
+control_newline='
+'
+run_manual_subject_control 'the tenant own release' \
+	"${control_prefix}ascoachingogvaner${control_own_tail}\$" accept
 run_manual_subject_control 'own release of another repository' \
-	"${control_prefix}(${control_shared_pair}|wedding-app${control_own_tail})\$" reject
+	"${control_prefix}wedding-app${control_own_tail}\$" reject
 run_manual_subject_control 'own release of a repository sharing the tenant prefix' \
-	"${control_prefix}(${control_shared_pair}|ascoachingogvaner-x${control_own_tail})\$" reject
+	"${control_prefix}ascoachingogvaner-x${control_own_tail}\$" reject
 run_manual_subject_control 'own release in any workflow path' \
-	"${control_prefix}(${control_shared_pair}|ascoachingogvaner${control_own_directory}.+\\.ya?ml${control_own_ref}${control_own_semver})\$" reject
+	"${control_prefix}ascoachingogvaner${control_own_directory}.+\\.ya?ml${control_own_ref}${control_own_semver}\$" reject
 run_manual_subject_control 'own release on a branch' \
-	"${control_prefix}(${control_shared_pair}|ascoachingogvaner${control_own_directory}${control_own_file}@refs/heads/${control_own_semver})\$" reject
+	"${control_prefix}ascoachingogvaner${control_own_directory}${control_own_file}@refs/heads/${control_own_semver}\$" reject
 run_manual_subject_control 'own release on any tag' \
-	"${control_prefix}(${control_shared_pair}|ascoachingogvaner${control_own_directory}${control_own_file}${control_own_ref}.+)\$" reject
-run_manual_subject_control 'own release placed first' \
-	"${control_prefix}(ascoachingogvaner${control_own_tail}|${control_shared_pair})\$" reject
-run_manual_subject_control 'own release outside the group' \
-	"${control_prefix}(${control_shared_pair})|ascoachingogvaner${control_own_tail}\$" reject
-run_manual_subject_control 'own release inside the legacy revision group' \
-	"${control_prefix}${control_legacy}(${control_a}|${control_b}|ascoachingogvaner${control_own_tail})\$" reject
-run_manual_subject_control 'own release inside the maintained revision group' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}(${control_c}|${control_d}|ascoachingogvaner${control_own_tail}))\$" reject
+	"${control_prefix}ascoachingogvaner${control_own_directory}${control_own_file}${control_own_ref}.+\$" reject
+run_manual_subject_control 'own release in another organization' \
+	"^https://github\\.com/evil-tech/ascoachingogvaner${control_own_tail}\$" reject
+run_manual_subject_control 'missing start anchor' \
+	"https://github\\.com/devantler-tech/ascoachingogvaner${control_own_tail}\$" reject
+run_manual_subject_control 'missing end anchor' \
+	"${control_prefix}ascoachingogvaner${control_own_tail}" reject
+run_manual_subject_control 'suffix after the end anchor' \
+	"${control_prefix}ascoachingogvaner${control_own_tail}\$junk" reject
+run_manual_subject_control 'trailing newline after the end anchor' \
+	"${control_prefix}ascoachingogvaner${control_own_tail}\$${control_newline}" reject
+run_manual_subject_control 'own release beside the retired shared publisher' \
+	"${control_prefix}(${control_shared}|ascoachingogvaner${control_own_tail})\$" reject
+run_manual_subject_control 'retired shared publisher alone' \
+	"${control_prefix}${control_shared}\$" reject
 
-# Exercise the actual caller and KRO consumer together. A well-formed signer
-# expression still fails if it does not accept the caller's full identity.
+# Exercise the starter's producer identity and the KRO consumer together. A
+# well-formed rule still fails if it does not accept the starter's identity.
 producer_controls_run=0
-# Exercise producer identity and envelope compatibility together on real copies.
-# Argument six supplies the conditional TenantSource publisherRevision input.
+rgd_path=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
+manual_path=k8s/bases/apps/ascoachingogvaner
 run_producer_control() {
 	description=$1
 	control_subject=$2
-	control_caller=$3
-	expected_result=$4
+	expected_result=$3
 	control=$mutation_dir/producer-control
 	rm -rf "$control"
 	cp -R "$baseline" "$control"
 	SUBJECT_CONTROL=$control_subject yq eval \
 		'(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) = strenv(SUBJECT_CONTROL)' \
-		"$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
-	mv "$mutation_dir/producer-control.yaml" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
-	CALLER_CONTROL=$control_caller yq eval '.jobs.publish.uses = strenv(CALLER_CONTROL)' \
-		"$shared_publish_workflow" > "$mutation_dir/producer-cd.yaml"
-	case "${5:-}" in
-		own-publisher|own-publisher-env|own-publisher-branch)
-			cp "$script_dir/fixtures/own-publisher.yaml" "$mutation_dir/producer-cd.yaml"
-			case "$5" in
-				own-publisher-env) expression='.env.PATH = "/untrusted"' ;;
-				own-publisher-branch) expression='.["on"].push.branches = ["main"]' ;;
-				*) expression='.' ;;
-			esac
-			yq eval "$expression" "$mutation_dir/producer-cd.yaml" > "$mutation_dir/producer-cd-mutant.yaml"
-			mv "$mutation_dir/producer-cd-mutant.yaml" "$mutation_dir/producer-cd.yaml"
-			;;
-		static-ref)
-			yq eval '(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"semver": ">=1.0.0"}' \
-				"$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
-			mv "$mutation_dir/producer-control.yaml" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
-			;;
-		workflow-document) printf '\n---\n{}\n' >> "$mutation_dir/producer-cd.yaml" ;;
-		platform-document) printf '\n---\n{}\n' >> "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" ;;
+		"$control/$rgd_path" > "$mutation_dir/producer-control.yaml"
+	mv "$mutation_dir/producer-control.yaml" "$control/$rgd_path"
+	case "${4:-}" in
+		platform-document) printf '\n---\n{}\n' >> "$control/$rgd_path" ;;
 		null-subject|nul-subject)
-			if [ "$5" = null-subject ]; then
+			if [ "$4" = null-subject ]; then
 				expression='(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) = null'
 			else
 				expression='(.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject) += "\u0000"'
 			fi
-			yq eval "$expression" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" > "$mutation_dir/producer-control.yaml"
-			mv "$mutation_dir/producer-control.yaml" "$control/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
-			;;
-		null-caller|nul-caller)
-			if [ "$5" = null-caller ]; then
-				expression='.jobs.publish.uses = null'
-			else
-				expression='.jobs.publish.uses += "\u0000"'
-			fi
-			yq eval "$expression" "$mutation_dir/producer-cd.yaml" > "$mutation_dir/producer-cd-mutant.yaml"
-			mv "$mutation_dir/producer-cd-mutant.yaml" "$mutation_dir/producer-cd.yaml"
+			yq eval "$expression" "$control/$rgd_path" > "$mutation_dir/producer-control.yaml"
+			mv "$mutation_dir/producer-control.yaml" "$control/$rgd_path"
 			;;
 		'') ;;
 		*) fail "unknown producer-control mutation" ;;
 	esac
 	result=reject
-	if (validate_publish_workflow "$mutation_dir/producer-cd.yaml"; validate_platform "$control" "$repo_root" "${6:-}") >/dev/null 2>&1; then
+	if (validate_platform "$control") >/dev/null 2>&1; then
 		result=accept
 	fi
 	[ "$result" = "$expected_result" ] || fail "producer control failed: $description ($result)"
 	producer_controls_run=$((producer_controls_run + 1))
 }
 
-control_legacy_caller=devantler-tech/actions/.github/workflows/publish-app.yaml@$control_a
-control_maintained_caller=devantler-tech/.github/.github/workflows/publish-app.yaml@$control_b
-control_generic_legacy="${control_prefix}${control_legacy}[0-9a-f]{40}\$"
-control_generic_transition="${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}${control_b})\$"
-run_producer_control 'static OCI ref retains conditional reconciliation safeguards' \
-	"$control_generic_transition" "$control_maintained_caller" accept static-ref
-# Literal CEL serialization from Platform's TenantSource publisher contract.
-# Exercise both arms; an explicit revision must remain a single full revision,
-# never an executable or widened publisher expression.
+# Literal CEL serialization of Platform's generic own-release rule: two string
+# literals around the regex-escaped Tenant name. Each rejected variant changes one part.
 # shellcheck disable=SC2016
-control_conditional_prefix='${schema.spec.source.publisherRevision == "" ? '
-# shellcheck disable=SC2016
-control_conditional_suffix=' : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
-control_conditional_default=$(printf '%s' "$control_generic_transition" | jq -Rs .)
-control_conditional_subject=$control_conditional_prefix$control_conditional_default$control_conditional_suffix
-run_producer_control 'conditional default accepts its approved maintained caller' \
-	"$control_conditional_subject" "$control_maintained_caller" accept
-run_producer_control 'conditional default rejects an unapproved maintained revision' \
-	"$control_conditional_subject" "devantler-tech/.github/.github/workflows/publish-app.yaml@$control_d" reject
-run_producer_control 'conditional default retains the pinned legacy caller' \
-	"$control_conditional_subject" "$control_legacy_caller" accept
-run_producer_control 'conditional explicit revision accepts the matching maintained caller' \
-	"$control_conditional_subject" "$control_maintained_caller" accept '' "$control_b"
-run_producer_control 'conditional explicit revision selects its caller instead of the default' \
-	"$control_conditional_subject" "devantler-tech/.github/.github/workflows/publish-app.yaml@$control_c" accept '' "$control_c"
-run_producer_control 'conditional explicit revision rejects a different maintained caller' \
-	"$control_conditional_subject" "$control_maintained_caller" reject '' "$control_d"
-run_producer_control 'conditional explicit revision cannot authorize the legacy caller' \
-	"$control_conditional_subject" "$control_legacy_caller" reject '' "$control_a"
-run_producer_control 'conditional explicit revision rejects a wildcard' \
-	"$control_conditional_subject" "$control_maintained_caller" reject '' '.*'
-run_producer_control 'conditional explicit revision rejects a short commit ID' \
-	"$control_conditional_subject" "$control_maintained_caller" reject '' 'bbbbbbb'
-run_producer_control 'conditional explicit revision rejects uppercase commit IDs' \
-	"$control_conditional_subject" "$control_maintained_caller" reject '' 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'
-run_producer_control 'static publisher subject cannot consume an explicit revision' \
-	"$control_generic_transition" "$control_maintained_caller" reject '' "$control_b"
-run_producer_control 'conditional explicit branch cannot widen the publisher' \
-	"$control_conditional_prefix$control_conditional_default : \".*\"}" "$control_maintained_caller" reject
-run_producer_control 'conditional expression cannot execute a different operation' \
-	"\${other.operation() ? $control_conditional_default$control_conditional_suffix" "$control_maintained_caller" reject
-# The default arm from platform#6303 joins two CEL literals around the
-# regex-escaped tenant name: the maintained shared publisher first, then the
-# tenant's own release workflow. Each rejected variant changes one part.
-control_own_name_expression=' + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + '
-control_own_shared_text="${control_prefix}(${control_canonical}(${control_b}|${control_c})|"
-control_own_shared=$(printf '%s' "$control_own_shared_text" | jq -Rs .)
-control_own_shared_unseparated=${control_own_shared_text%'|'}
-control_own_release=$(printf '%s' "${control_own_tail})\$" | jq -Rs .)
-control_own_default=$control_own_shared$control_own_name_expression$control_own_release
-run_producer_control 'own-release default accepts the direct publisher' \
-	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
-	"$control_maintained_caller" accept own-publisher
-run_producer_control 'shared-only default rejects the direct publisher' \
-	"$control_conditional_subject" "$control_maintained_caller" reject own-publisher
-run_producer_control 'explicit shared revision cannot authorize the direct publisher' \
-	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
-	"$control_maintained_caller" reject own-publisher "$control_b"
-run_producer_control 'own-release producer rejects an execution environment override' \
-	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
-	"$control_maintained_caller" reject own-publisher-env
-run_producer_control 'own-release producer rejects branch publication' \
-	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
-	"$control_maintained_caller" reject own-publisher-branch
-run_producer_control 'own-release default accepts its approved maintained caller' \
-	"$control_conditional_prefix$control_own_default$control_conditional_suffix" "$control_maintained_caller" accept
-run_producer_control 'own-release default rejects an unapproved maintained revision' \
-	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
-	"devantler-tech/.github/.github/workflows/publish-app.yaml@$control_d" reject
-run_producer_control 'own-release default keeps the explicit revision arm' \
-	"$control_conditional_prefix$control_own_default$control_conditional_suffix" \
-	"devantler-tech/.github/.github/workflows/publish-app.yaml@$control_d" accept '' "$control_d"
-run_producer_control 'own-release default with a loosened tenant tail' \
-	"$control_conditional_prefix$control_own_shared$control_own_name_expression$(printf '%s' '.+)$' | jq -Rs .)$control_conditional_suffix" \
-	"$control_maintained_caller" reject
-run_producer_control 'own-release default names the tenant namespace' \
-	"$control_conditional_prefix$control_own_shared + schema.spec.namespace.replace(\".\", \"\\\\.\").replace(\"-\", \"\\\\-\") + $control_own_release$control_conditional_suffix" \
-	"$control_maintained_caller" reject
-run_producer_control 'own-release default without the name escapes' \
-	"$control_conditional_prefix$control_own_shared + schema.spec.name + $control_own_release$control_conditional_suffix" \
-	"$control_maintained_caller" reject
-run_producer_control 'own-release default shared literal without its separator' \
-	"$control_conditional_prefix$(printf '%s' "$control_own_shared_unseparated" | jq -Rs .)$control_own_name_expression$control_own_release$control_conditional_suffix" \
-	"$control_maintained_caller" reject
-run_producer_control 'own-release default shared literal without its group' \
-	"$control_conditional_prefix$(printf '%s' "${control_prefix}${control_canonical}(${control_b}|${control_c})|" | jq -Rs .)$control_own_name_expression$control_own_release$control_conditional_suffix" \
-	"$control_maintained_caller" reject
-run_producer_control 'own-release default with the retired legacy publisher' \
-	"$control_conditional_prefix$(printf '%s' "${control_prefix}(${control_legacy}[0-9a-f]{40}|" | jq -Rs .)$control_own_name_expression$control_own_release$control_conditional_suffix" \
-	"$control_legacy_caller" reject
-run_producer_control 'current generic legacy rule accepts a pinned legacy caller' \
-	"$control_generic_legacy" "$control_legacy_caller" accept
-run_producer_control 'transition retains the pinned legacy caller' \
-	"$control_generic_transition" "$control_legacy_caller" accept
-run_producer_control 'transition accepts its exact maintained caller' \
-	"$control_generic_transition" "$control_maintained_caller" accept
-run_producer_control 'two exact maintained revisions' \
-	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}(${control_b}|${control_c}))\$" \
-	"$control_maintained_caller" accept
-run_producer_control 'fully literal transition' \
-	"${control_prefix}(${control_legacy}${control_a}|${control_canonical}${control_b})\$" \
-	"$control_maintained_caller" accept
-run_producer_control 'maintained caller without maintained authorization' \
-	"$control_generic_legacy" "$control_maintained_caller" reject
-run_producer_control 'maintained caller at an unapproved revision' \
-	"$control_generic_transition" "devantler-tech/.github/.github/workflows/publish-app.yaml@$control_d" reject
-run_producer_control 'legacy caller at an unapproved literal revision' \
-	"${control_prefix}${control_legacy}${control_c}\$" "$control_legacy_caller" reject
-run_producer_control 'maintained wildcard' \
-	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}[0-9a-f]{40})\$" \
-	"$control_maintained_caller" reject
-run_producer_control 'maintained tag' \
-	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}v7.23.0)\$" \
-	"$control_maintained_caller" reject
-run_producer_control 'third maintained revision' \
-	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}(${control_b}|${control_c}|${control_d}))\$" \
-	"$control_maintained_caller" reject
-run_producer_control 'duplicate maintained revision' \
-	"${control_prefix}(${control_legacy}[0-9a-f]{40}|${control_canonical}(${control_b}|${control_b}))\$" \
-	"$control_maintained_caller" reject
-run_producer_control 'legacy short identifier pattern' \
-	"${control_prefix}(${control_legacy}[0-9a-f]{7,40}|${control_canonical}${control_b})\$" \
-	"$control_maintained_caller" reject
-run_producer_control 'different maintained workflow' \
-	"${control_prefix}(${control_legacy}[0-9a-f]{40}|\\.github/\\.github/workflows/publish-manifests\\.yaml@${control_b})\$" \
-	"$control_maintained_caller" reject
-run_producer_control 'ungrouped producer locations' \
-	"${control_prefix}${control_legacy}[0-9a-f]{40}|${control_canonical}${control_b}\$" \
-	"$control_maintained_caller" reject
-run_producer_control 'trailing newline in generic subject' \
-	"${control_generic_transition}${control_newline}" "$control_maintained_caller" reject
-run_producer_control 'lookalike caller repository' \
-	"$control_generic_transition" "devantler-tech/another/.github/workflows/publish-app.yaml@$control_b" reject
-run_producer_control 'mutable maintained caller' \
-	"$control_generic_transition" 'devantler-tech/.github/.github/workflows/publish-app.yaml@main' reject
-run_producer_control 'caller contains a trailing newline' \
-	"$control_generic_transition" "${control_maintained_caller}${control_newline}" reject
-run_producer_control 'second workflow document' \
-	"$control_generic_transition" "$control_maintained_caller" reject workflow-document
+control_name_expression=' + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + '
+# Encode one CEL string literal as JSON.
+cel_literal() { printf '%s' "$1" | jq -Rs .; }
+control_before=$(cel_literal "$control_prefix")
+control_after=$(cel_literal "${control_own_tail}\$")
+control_generic="\${${control_before}${control_name_expression}${control_after}}"
+run_producer_control 'own-release rule accepts the starter' \
+	"$control_generic" accept
+run_producer_control 'loosened tenant tail' \
+	"\${${control_before}${control_name_expression}$(cel_literal '.+$')}" reject
+run_producer_control 'missing end anchor' \
+	"\${${control_before}${control_name_expression}$(cel_literal "$control_own_tail")}" reject
+run_producer_control 'branch instead of a release tag' \
+	"\${${control_before}${control_name_expression}$(cel_literal "${control_own_directory}${control_own_file}@refs/heads/${control_own_semver}\$")}" reject
+run_producer_control 'another organization' \
+	"\${$(cel_literal '^https://github\.com/evil-tech/')${control_name_expression}${control_after}}" reject
+run_producer_control 'missing start anchor' \
+	"\${$(cel_literal 'https://github\.com/devantler-tech/')${control_name_expression}${control_after}}" reject
+run_producer_control 'names the tenant namespace' \
+	"\${${control_before} + schema.spec.namespace.replace(\".\", \"\\\\.\").replace(\"-\", \"\\\\-\") + ${control_after}}" reject
+run_producer_control 'without the name escapes' \
+	"\${${control_before} + schema.spec.name + ${control_after}}" reject
+run_producer_control 'own release beside the retired shared publisher' \
+	"\${$(cel_literal "${control_prefix}(${control_shared}|")${control_name_expression}$(cel_literal "${control_own_tail})\$")}" reject
+run_producer_control 'retired conditional shared-publisher arm' \
+	"\${schema.spec.source.publisherRevision == \"\" ? ${control_before}${control_name_expression}${control_after} : \"^https://github\\\\.com/devantler-tech/\\\\.github/\\\\.github/workflows/publish-app\\\\.yaml@\" + schema.spec.source.publisherRevision + \"\$\"}" reject
+run_producer_control 'retired static shared publisher' \
+	"${control_prefix}${control_shared}\$" reject
+run_producer_control 'trailing newline in the rule' \
+	"${control_generic}${control_newline}" reject
 run_producer_control 'second KRO document' \
-	"$control_generic_transition" "$control_maintained_caller" reject platform-document
-run_producer_control 'null generic subject' \
-	"$control_generic_transition" "$control_maintained_caller" reject null-subject
-run_producer_control 'NUL in generic subject' \
-	"$control_generic_transition" "$control_maintained_caller" reject nul-subject
-run_producer_control 'null publisher caller' \
-	"$control_generic_transition" "$control_maintained_caller" reject null-caller
-run_producer_control 'NUL in publisher caller' \
-	"$control_generic_transition" "$control_maintained_caller" reject nul-caller
+	"$control_generic" reject platform-document
+run_producer_control 'null rule' \
+	"$control_generic" reject null-subject
+run_producer_control 'NUL in the rule' \
+	"$control_generic" reject nul-subject
 
-rgd_path=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
-manual_path=k8s/bases/apps/ascoachingogvaner
-run_mutation "conditional publisher revision schema becomes mutable" "$rgd_path" \
-	'.spec.schema.types.TenantSource.publisherRevision = "string"'
-run_mutation "conditional digest schema becomes mutable" "$rgd_path" \
-	'.spec.schema.types.TenantSource.digest = "string"'
-run_mutation "conditional source loses digest and publisher pairing" "$rgd_path" \
-	'.spec.schema.spec.source = "TenantSource | default={}"'
-run_mutation "static OCI ref bypasses conditional source safeguards" "$rgd_path" \
-	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"semver": ">=1.0.0"} | .spec.schema.spec.source = "TenantSource | default={}"'
-run_mutation "static OCI ref bypasses conditional digest validation" "$rgd_path" \
-	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"semver": ">=1.0.0"} | .spec.schema.types.TenantSource.digest = "string"'
+# Flux resolves a digest ahead of a semver range, so a digest silently freezes
+# the stream; a floating tag or a widened range admits artifacts no stable
+# release produced.
+run_mutation "KRO OCI stream replaced by a floating tag" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = {"tag": "latest"}'
+run_mutation "KRO OCI stream overridden by a digest" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.digest) = "sha256:0000000000000000000000000000000000000000000000000000000000000000"'
+run_mutation "KRO OCI stream widened to pre-releases" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semver) = ">=0.0.0-0"'
+run_mutation "KRO OCI stream filter widened" "$rgd_path" \
+	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semverFilter) = ".*"'
 run_mutation "application reconciliation defaults off" "$rgd_path" \
 	'.spec.schema.types.TenantSource.reconcileApplication = "boolean | default=false"'
-# This is a literal CEL expression in the mutated source, not shell expansion.
-# shellcheck disable=SC2016
-run_mutation "conditional source accepts a mutable ref" "$rgd_path" \
-	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref) = "${schema.spec.source.digest == \"\" ? {\"semver\": \">=1.0.0\"} : {\"tag\": schema.spec.source.digest}}"'
+run_mutation "application reconciliation deletion guard removed" "$rgd_path" \
+	'.spec.schema.types.TenantSource.reconcileApplication = "boolean | default=true"'
 run_vault_mutation "tenant data path widened" \
 	's|secret/data/apps/ascoachingogvaner/\*|secret/data/apps/*|'
 run_vault_mutation "tenant metadata path crossed into another tenant" \
@@ -1152,26 +807,7 @@ run_mutation "manual OCI verification removed" "$manual_path/oci-repository.yaml
 run_mutation "manual OCI subject widened" "$manual_path/oci-repository.yaml" \
 	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github.com/devantler-tech/.*$"'
 run_mutation "manual OCI subject contains a NUL byte" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$\u0000"'
-run_mutation "manual OCI key verification override added" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.secretRef.name) = "alternate-cosign-key"'
-# The narrow subject parser must reject mutable refs and foreign producers.
-run_mutation "manual OCI subject ref floated to a tag" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@v1\.2\.3$"'
-run_mutation "manual OCI subject ref floated to a branch" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@main$"'
-run_mutation "manual OCI subject ref accepts short SHAs" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{7,40}$"'
-run_mutation "manual OCI subject end anchor dropped" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}"'
-run_mutation "manual OCI subject alternation left ungrouped" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@1d726483facb9340655489913f609082677be8f5|b089a1b0b089a1b0b089a1b0b089a1b0b089a1b0$"'
-run_mutation "manual OCI subject groups a single revision" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(1d726483facb9340655489913f609082677be8f5)$"'
-run_mutation "manual OCI subject group holds a wildcard" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@(1d726483facb9340655489913f609082677be8f5|.*)$"'
-run_mutation "manual OCI subject producer org changed" "$manual_path/oci-repository.yaml" \
-	'(.spec.verify.matchOIDCIdentity[0].subject) = "^https://github\.com/evil-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$"'
+	'(.spec.verify.matchOIDCIdentity[0].subject) += "\u0000"'
 run_mutation "manual OCI source suspended" "$manual_path/oci-repository.yaml" \
 	'.spec.suspend = true'
 # The release-stream selector keeps the tenant on its signed stable releases. Flux
@@ -1197,6 +833,9 @@ run_mutation "manual GHCR credential returned to inventory" "$manual_path/kustom
 run_mutation "manual OCI source removed from inventory" "$manual_path/kustomization.yaml" \
 	'.resources -= ["oci-repository.yaml"]'
 
+run_mutation "manual OCI stream filter widened" "$manual_path/oci-repository.yaml" \
+	'(.spec.ref.semverFilter) = ".*"'
+
 run_publish_mutation "tag trigger removed" 'del(.["on"].push.tags)'
 run_publish_mutation "tenant-only guard removed" 'del(.jobs.publish.if)'
 run_publish_mutation "package publication permission removed" 'del(.jobs.publish.permissions.packages)'
@@ -1211,26 +850,13 @@ run_publish_mutation "checkout keeps its credentials" \
 	'.jobs.publish.steps[1].with."persist-credentials" = true'
 run_publish_mutation "shared and own publisher combined" \
 	'.jobs.publish.uses = "devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"'
-run_publish_mutation "shared producer workflow unpinned" \
-	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/publish-app.yaml@main"' "$shared_publish_workflow"
-run_publish_mutation "shared producer workflow changed" \
-	'.jobs.publish.uses = "devantler-tech/actions/.github/workflows/other.yaml@47f0d9b632581a613963a2d25c243713f24c32a0"' "$shared_publish_workflow"
-run_publish_mutation "shared application identity hard-coded" \
-	'.jobs.publish.with."app-name" = "app"' "$shared_publish_workflow"
 run_publish_mutation "publisher authority widened" \
 	'.jobs.publish.permissions.issues = "write"'
 run_publish_mutation "branch publication enabled" \
 	'.["on"].push.branches = ["main"]'
 run_publish_mutation "second package publisher added" \
 	'.jobs.shadow = {"runs-on": "ubuntu-latest", "permissions": {"packages": "write"}, "steps": []}'
-# Both halves are load-bearing, and neither implies the other: a weaker assertion
-# written as has("enable-caller-pin") would still reject the deletion while
-# happily accepting an explicit false — which is the mutation that silently
-# restores the unenforced default. Deleting the pair is what would let the
-# caller-pin requirement decay back to opt-in without a failing test.
-run_publish_mutation "caller SHA-pin enforcement removed" \
-	'del(.jobs.publish.with."enable-caller-pin")' "$shared_publish_workflow"
-run_publish_mutation "caller SHA-pin enforcement disabled" \
-	'.jobs.publish.with."enable-caller-pin" = false' "$shared_publish_workflow"
+run_publish_mutation "execution environment overridden" \
+	'.env.PATH = "/untrusted"'
 
 echo "PASS: signed tenant artifact envelope (KRO + manual + OpenBao + publisher + ${mutations_run} safety mutations + ${subject_controls_run} subject controls + ${producer_controls_run} producer controls)"

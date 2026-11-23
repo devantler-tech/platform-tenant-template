@@ -238,11 +238,7 @@ else
 	drop tenancy "$ci"
 	drop tenancy "$dependabot"
 	drop tenancy AGENTS.md
-	# The tenant pin tests are the fixture's only readers, so it goes with them.
-	rm -rf deploy Dockerfile .dockerignore renovate.json .github/workflows/cd.yaml \
-		scripts/publish-pin-approved.sh scripts/publish-pin-approved.test.sh \
-		scripts/workflow-caller-pin-contract.test.sh scripts/fixtures/own-publisher.yaml
-	rmdir scripts/fixtures 2>/dev/null || true
+	rm -rf deploy Dockerfile .dockerignore renovate.json .github/workflows/cd.yaml
 	# Keep template-sync from bringing the removed tenant plumbing back.
 	cat >>.templatesyncignore <<'EOF'
 
@@ -250,10 +246,6 @@ else
 # Remove these lines, and copy the files back from the template, to become one.
 .github/workflows/cd.yaml
 renovate.json
-scripts/publish-pin-approved.sh
-scripts/publish-pin-approved.test.sh
-scripts/workflow-caller-pin-contract.test.sh
-scripts/fixtures/own-publisher.yaml
 EOF
 fi
 

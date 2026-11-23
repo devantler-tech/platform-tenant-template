@@ -97,7 +97,7 @@ yq -o=json '.jobs.stack.steps' "$scaffold_workflow" | jq -e '
   $guards[0].value."working-directory" == "${{ env.APP }}"
 ' >/dev/null || fail 'the scaffold compatibility rule lacks its preceding queue gate for every stack'
 # Go tenants drop the lint job, so the tenancy job must gate cd.yaml's queue itself.
-yq -o=json '.jobs."workflow-caller-pins".steps' "$root/.github/workflows/ci.yaml" | jq -e '
+yq -o=json '.jobs."workflow-queues".steps' "$root/.github/workflows/ci.yaml" | jq -e '
   [.[] | select((.run // "") == "bash scripts/validate-workflow-queues.sh") | select(has("if") | not)] | length == 1
 ' >/dev/null || fail 'the tenancy job lacks its unconditional queue gate'
 yq -r '.jobs.stack.steps[] | select(.run // "" | contains("validate-workflow-queues.sh")) | .run' "$scaffold_workflow" >"$scratch/scaffold-guard.sh"

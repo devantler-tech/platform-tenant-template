@@ -91,9 +91,6 @@ the template excludes, add the line `!<entry>` to your list.
 | `.github/workflows/template-sync.yaml` | Opens the weekly template-sync PR |
 | `CLAUDE.md` | `@AGENTS.md` shim |
 | `docs/REFERENCE.md` | This reference |
-| `scripts/workflow-caller-pin-contract.test.sh` (*tenant*) | Runs in each tenant's required CI and rejects malformed, divergent, or rolled-back reusable-workflow pins, and a version comment that does not name the tag of the pinned commit |
-| `scripts/fixtures/own-publisher.yaml` (*tenant*) | Direct-action compatibility input used by the portable caller and approval checks; sync it with those checks |
-| `scripts/publish-pin-approved.sh`, `scripts/publish-pin-approved.test.sh` (*tenant*) | The check a tenant's required CI runs to refuse a changed publisher identity until Platform approves it for that tenant. Legacy revisions use the existing approved set; maintained publishers require an exact canonical approval. The default `ci.yaml` runs the `publish-pin-approved` job and includes it in `ci-required-checks`; this unregistered template runs its tests only. Older tenants that own `ci.yaml` add the job themselves |
 | `zizmor.yml` | GitHub Actions pinning policy enforced by the security scan |
 
 **Scaffold-time only (arrives when the repo is created, is removed by `scripts/scaffold.sh`, and is
@@ -104,10 +101,10 @@ never re-synced, so a tenant still carrying these from an older sync can delete 
 | `stacks/` | The Go and .NET stack sources the scaffold copies once; the copies are then yours |
 | `scripts/scaffold.sh` (+ its test) | One-shot stack and tenancy scaffold; its test scaffolds every combination and checks what each leaves |
 | `.github/workflows/validate-stacks.yaml` | Scaffolds each stack as a tenant, then builds, tests, lints, renders `deploy/`, builds the image and checks it serves `GET /` under the restricted container settings |
-| `.github/workflows/validate-scaffold.yaml` | Renders `deploy/`, schema-validates every resource, applies the live Platform/shared Kyverno policies, and exercises a pinned Kubernetes API. The live checks prove the template publishes through the pinned signing workflow; Platform pulls the public tenant artifact without a credential through a cosign-verifying OCI source; and Flux consumes that source while impersonating and targeting the managed `restricted` namespace for both KRO and manual registrations. They then prove the Deployment passes Pod Security `restricted`, the tenant identity can reconcile every rendered kind, and cluster-scoped or interactive privileges remain denied. It gates template PRs, re-validates `main` after every merge, and rechecks upstream drift every day at 06:17 UTC (or on manual dispatch), keeping one tracking issue open while that scheduled check fails on `main`; structural mutation tests keep every layer fail-closed. The workflow no-ops in tenants and is scaffold-time only |
+| `.github/workflows/validate-scaffold.yaml` | Renders `deploy/`, schema-validates every resource, applies the live Platform/shared Kyverno policies, and exercises a pinned Kubernetes API. The live checks prove the template signs its own releases in the frame Platform verifies; Platform pulls the public tenant artifact without a credential through a cosign-verifying OCI source; and Flux consumes that source while impersonating and targeting the managed `restricted` namespace for both KRO and manual registrations. They then prove the Deployment passes Pod Security `restricted`, the tenant identity can reconcile every rendered kind, and cluster-scoped or interactive privileges remain denied. It gates template PRs, re-validates `main` after every merge, and rechecks upstream drift every day at 06:17 UTC (or on manual dispatch), keeping one tracking issue open while that scheduled check fails on `main`; structural mutation tests keep every layer fail-closed. The workflow no-ops in tenants and is scaffold-time only |
 | `scripts/rename-placeholders.sh` (+ its test) | One-shot rename of the placeholder app to your tenant name |
 | `scripts/agent-instructions.test.sh` | Fails closed if the one-time agent scaffold loses its ownership, dependency-bot, external-code, exact-head review, pinned-merge, or user-path evaluation boundaries, or regains a retired rule |
-| `scripts/workflow-caller-contract.test.sh` | Keeps the portable caller-pin contract wired into tenant CI while validating template-only publisher, release, ownership, and scaffold invariants |
+| `scripts/workflow-caller-contract.test.sh` | Validates the template-only own-release publisher, release, template-sync, ownership, and scaffold invariants |
 | `scripts/tenant-ci-contract.test.sh` | Keeps default tenant PR CI least-privilege and fail-closed over both the image build and rendered manifests |
 | `scripts/pod-security-admission*.test.sh` | Proves the rendered Deployment is accepted at Pod Security `restricted` while unsafe mutations are denied, and pins that live gate against structural bypasses |
 | `scripts/tenant-rbac*.test.sh` | Proves the Platform tenant reconciliation identity can manage every rendered scaffold resource while cluster-scoped and interactive privileges stay denied |
@@ -163,10 +160,6 @@ scripts/validate-workflow-queues.test.sh
 # Only without --tenancy: the tenant plumbing the scaffold removed.
 .github/workflows/cd.yaml
 renovate.json
-scripts/publish-pin-approved.sh
-scripts/publish-pin-approved.test.sh
-scripts/workflow-caller-pin-contract.test.sh
-scripts/fixtures/own-publisher.yaml
 ```
 
 `AGENTS.md` and the `maintain` skill ship as scaffolding (a starting point for new
@@ -195,67 +188,21 @@ names this repository's own `cd.yaml` on the release tag, and the platform's
 (ADR 0017), so a new action revision needs no platform approval. Workflow configuration alone does not prove that publication or
 reconciliation succeeded.
 
-Before moving a publisher between repositories, merge and template-sync the
-approval check first. CI executes the check from the base revision so the
-repoint cannot authorize itself. The same commit identifier in another
-repository is a changed identity, not an unchanged pin. Maintained publishing
-requires the tenant's exact `publish-app` approval in Platform's canonical
-record, with at most two distinct reviewed commits during a transition; legacy
-approvals do not authorize it. Merge and verify the corresponding Platform
-approval and image/manifest verification policy before changing a tenant caller.
-
-The live envelope check accepts the manual tenant matcher's strict writer forms:
-one to three distinct legacy commit IDs, optionally paired with one or two
-distinct maintained commit IDs. Both locations must name the same app publisher,
-all IDs must be full lowercase commit IDs, and the whole subject must be anchored.
-Its controls exercise copies of the Platform envelope and reject mutable refs,
-wildcards, wrong producers, duplicate IDs and excess approvals. This checks the
-writer's narrow shape; Platform still owns which exact revisions are approved.
-The generic KRO rule may retain the existing legacy full-commit pattern, alone
-or paired with one or two literal maintained commits. Its rule must also match
-the starter's actual pinned publisher identity; recognizing a valid rule shape
-does not establish that the producer and consumer agree. Maintained wildcards,
-mutable callers, multiple YAML documents and control characters are rejected.
-The current conditional TenantSource form is recognized without executing CEL:
-the default subject is decoded and checked against the actual caller, while the
-explicit arm must retain its exact maintained-publisher path and full-revision
-schema. Digest selection must retain the immutable digest schema, and optional
-application reconciliation must default on and preserve its deletion guard.
-Static OCI references remain supported; conditional application reconciliation
-still requires the same source schema and safeguards with that reference form.
-Tenants still on the shared publisher keep it at its reviewed minimum version.
-Its portable guard rejects a return to the retired catalogue, movable refs,
-older versions and version comments that do not match the immutable commit.
-The Platform approval and verification policy must be deployed before a live
-tenant adopts that caller. This compatibility check does not activate publishing
-or authorize a tenant's caller pin.
-
-The envelope check also accepts the minimal direct `actions/publish-app` caller
-frame validated by the portable approval check. It instantiates the generic
-Tenant's exact own-release rule with a fixed sample repository and release tag,
-then compares that producer with the decoded rule. A shared-only default or an
-explicit shared-publisher revision cannot authorize this producer. Execution
-environment overrides and branch publication remain refused. The starter ships
-this caller. This offline check does not prove that a real release was signed,
-admitted or reconciled.
+The live envelope check reads Platform's tenant definitions without executing
+CEL. It accepts only a verifier that trusts the tenant's own repository's
+release workflow on a strict release tag: for the generic KRO Tenant, the
+repository the Tenant names; for the manual registration, that tenant's own
+repository. It instantiates the generic rule with a fixed sample repository and
+release tag, then compares it with the starter's minimal tag-only,
+credential-free `cd.yaml` signing frame. A shared-publisher identity, another
+repository, a branch, a loosened workflow path or tag, an execution-environment
+override and branch publication are all refused, and the source must follow
+stable releases without a digest or floating tag. This offline check does not
+prove that a real release was signed, admitted or reconciled.
 
 > **Convention:** the Deployment's container `name` MUST equal the repository
 > name — `publish-app` pins the built image digest into the container with that
 > name (`app-name: ${{ github.event.repository.name }}` in `cd.yaml`).
-
-## Staging a publisher migration
-
-Existing tenants keep their own `deploy/` tree and CI workflow. Land the updated portable caller
-check, approval check, their tests and `scripts/fixtures/own-publisher.yaml` while keeping the
-current publisher unchanged. The required approval job executes the checker from its base revision,
-so the guard update must merge in the consumer before a later PR changes its publishing job.
-
-After that consumer’s base contains the updated checks, switch its publisher in a separate PR.
-Keep support for both `deploy/deployment.yaml` and `deploy/base/deployment.yaml`: template sync does
-not move tenant-owned manifests. The prepared direct-action contract accepts either fixed path or
-the exact file-selection expression in the compatibility fixture. The existing reusable-workflow
-caller still requires its original Platform approval; the new direct caller retains immutable pins,
-a minimal signing job, credential-free checkout and an unskippable publisher.
 
 ## Validate locally
 
@@ -268,8 +215,6 @@ Run these from the repository root. In every platform tenant, and in this templa
 
 ```sh
 kubectl kustomize deploy/                              # manifests build
-sh scripts/workflow-caller-pin-contract.test.sh       # portable tenant caller-pin contract (resolves the version-comment tag on github.com and compares it with the pinned commit)
-sh scripts/publish-pin-approved.test.sh               # publish-app pin approval check (reads a local approved set, never the network)
 bash scripts/validate-workflow-queues.sh               # validate the queue field unsupported by released actionlint
 actionlint -ignore code-quality -ignore 'unexpected.key..queue..for..concurrency..section' .github/workflows/* # every other workflow diagnostic stays active
 ```
