@@ -12,7 +12,7 @@ jobs:
     # Skipped in the template repo itself; runs in every application created from it.
     # The template is matched by its repository ID, which survives renames.
     if: github.repository_id != '1253884448'
-    uses: devantler-tech/.github/.github/workflows/create-release.yaml@cc156a3693019fdbe9817c46f1a91cd50a124695 # v21.7.3
+    uses: devantler-tech/.github/.github/workflows/create-release.yaml@cd371c6003deca3a3b417b783da73e05b4bf690f # v22.0.0
     with:
       disable-issue-side-effects: true
     secrets:
