@@ -2,7 +2,7 @@
 #
 # It matches deploy/deployment.yaml: the server listens on port 3000 (the PORT
 # variable), runs as the non-root user 1000, and needs no writable filesystem.
-FROM golang:1.27.3-alpine AS build
+FROM golang:1.27.4-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
