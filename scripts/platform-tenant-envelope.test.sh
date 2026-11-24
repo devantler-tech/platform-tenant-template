@@ -16,14 +16,32 @@ stable_stream='((tag == "!!map") and (((keys | sort | join(",")) == "semver") or
 # The starter's producer identity, set once its signing frame is validated.
 publisher_identity=''
 # Platform trusts only a tenant's OWN release workflow on a release tag (ADR 0017,
-# platform#6303): the tenant's repository followed by this tail. The semver part
-# is the ksail release grammar, pre-releases included. Only this exact text is
-# recognised; any other own-release shape is rejected, never interpreted.
+# platform#6303): the tenant's repository followed by this tail. Since
+# platform#6564 that workflow is the tenant's `cd.yaml`, the file this starter
+# publishes from. The semver part is the ksail release grammar, pre-releases
+# included. Only this exact text is recognised; any other own-release shape is
+# rejected, never interpreted.
 own_release_prefix='^https://github\.com/devantler-tech/'
-own_release_tail='/\.github/workflows/[^/]+\.ya?ml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+own_release_directory='/\.github/workflows/'
+own_release_workflow='cd'
+own_release_ref_tail='\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
+own_release_tail=$own_release_directory$own_release_workflow$own_release_ref_tail
+# Platform's preview guard (platform#6561): a Tenant named `<name>-dev` is a
+# preview that gets its own namespace and no reconciler. Every envelope part this
+# starter relies on must stay outside that guard, and nowhere else conditional.
+# The quotes are CEL text compared verbatim, never shell syntax.
+# shellcheck disable=SC2089
+not_preview="schema.metadata.name != schema.spec.name + '-dev'"
+# shellcheck disable=SC2089
+tenant_namespace_name="\${schema.metadata.name == schema.spec.name + '-dev' ? schema.metadata.name : schema.spec.name}"
+kustomization_when="\${schema.spec.source.reconcileApplication && !schema.spec.sops && $not_preview}"
+kustomization_sops_when="\${schema.spec.source.reconcileApplication && schema.spec.sops && $not_preview}"
+not_preview="\${$not_preview}"
 # A fixed sample repository instantiates the generic Tenant's dynamic name.
 probe_repository=tenant-envelope-probe
-export expected_oidc_issuer stable_semver_filter
+# shellcheck disable=SC2090
+export expected_oidc_issuer stable_semver_filter not_preview tenant_namespace_name \
+	kustomization_when kustomization_sops_when
 
 # Report the failed invariant and stop the envelope check with a nonzero status.
 fail() {
@@ -59,24 +77,32 @@ decode_cel_string() (
 )
 
 # Read the generic Tenant's subject without executing CEL. The only accepted
-# expression joins two literals around the regex-escaped Tenant name: the
-# organization prefix before it, the own-release tail and end anchor after it.
-# Print that rule instantiated for the fixed probe repository.
+# expression joins three literals around two exact expressions: the
+# organization prefix, the regex-escaped Tenant name, the workflow directory,
+# the workflow choice (business-site's `publish-runtime`, every other tenant's
+# `cd`, platform#6564), then the release-tag tail and end anchor. Print that
+# rule instantiated for the fixed probe repository, which is not business-site
+# and so takes the `cd` arm.
 # The CEL delimiters below are literal text, never shell expansions.
 # shellcheck disable=SC2016
 generic_own_release_subject() (
 	subject=$1
 	name_expression=' + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + '
+	workflow_expression=' + (schema.spec.name == "business-site" ? "publish-runtime" : "'"$own_release_workflow"'") + '
+	[ "$probe_repository" != business-site ] || exit 1
 	case "$subject" in
-		'${'*"$name_expression"*'}') ;;
+		'${'*"$name_expression"*"$workflow_expression"*'}') ;;
 		*) exit 1 ;;
 	esac
 	encoded=${subject#'${'}
 	encoded=${encoded%'}'}
 	before=$(decode_cel_string "${encoded%%"$name_expression"*}") || exit 1
-	after=$(decode_cel_string "${encoded#*"$name_expression"}") || exit 1
+	rest=${encoded#*"$name_expression"}
+	directory=$(decode_cel_string "${rest%%"$workflow_expression"*}") || exit 1
+	after=$(decode_cel_string "${rest#*"$workflow_expression"}") || exit 1
 	[ "$before" = "$own_release_prefix" ] || exit 1
-	[ "$after" = "$own_release_tail\$" ] || exit 1
+	[ "$directory" = "$own_release_directory" ] || exit 1
+	[ "$after" = "$own_release_ref_tail\$" ] || exit 1
 	own_release_subject "$probe_repository"
 )
 
@@ -250,9 +276,11 @@ validate_platform() {
 	# shellcheck disable=SC2016
 	yq eval -e '
 		(.spec.resources[] | select(.id == "tenantNamespace").template) as $namespace
-		| (.spec.resources[] | select(.id == "serviceAccount").template) as $serviceAccount
+		| (.spec.resources[] | select(.id == "serviceAccount")) as $serviceAccountResource
+		| $serviceAccountResource.template as $serviceAccount
 		| (.spec.resources[] | select(.id == "ociRepository").template) as $ociRepository
-		| (.spec.resources[] | select(.id == "roleBinding").template) as $roleBinding
+		| (.spec.resources[] | select(.id == "roleBinding")) as $roleBindingResource
+		| $roleBindingResource.template as $roleBinding
 		| (.spec.resources[] | select(.id == "kustomization")) as $kustomizationResource
 		| (.spec.resources[] | select(.id == "kustomizationSops")) as $kustomizationSopsResource
 		| $kustomizationResource.template as $kustomization
@@ -260,10 +288,13 @@ validate_platform() {
 		| (([.spec.resources[] | select(.id == "ghcrAuth")] | length) == 0
 		and ([.spec.resources[] | select(.id == "ociRepository")] | length) == 1
 		and $namespace.kind == "Namespace"
-		and $namespace.metadata.name == "${schema.spec.name}"
+		and ($namespace.metadata.name | tag == "!!str")
+		and $namespace.metadata.name == strenv(tenant_namespace_name)
 		and $namespace.metadata.labels."app.kubernetes.io/managed-by" == "kro"
 		and $namespace.metadata.labels."pod-security.kubernetes.io/enforce" == "restricted"
 		and $namespace.metadata.labels."pod-security.kubernetes.io/enforce-version" == "latest"
+		and (($serviceAccountResource | has("includeWhen") | not)
+			or ($serviceAccountResource.includeWhen | join("|")) == strenv(not_preview))
 		and $serviceAccount.kind == "ServiceAccount"
 		and $serviceAccount.metadata.name == "${schema.spec.name}"
 		and $serviceAccount.metadata.namespace == "${tenantNamespace.metadata.name}"
@@ -284,6 +315,8 @@ validate_platform() {
 		and $ociRepository.spec.verify.matchOIDCIdentity[0].issuer == strenv(expected_oidc_issuer)
 		and ($ociRepository.spec.verify.matchOIDCIdentity[0].subject | tag == "!!str")
 		and ($ociRepository.spec.verify.matchOIDCIdentity[0].subject | test("[[:cntrl:]]") | not)
+		and (($roleBindingResource | has("includeWhen") | not)
+			or ($roleBindingResource.includeWhen | join("|")) == strenv(not_preview))
 		and $roleBinding.kind == "RoleBinding"
 		and $roleBinding.metadata.name == "${schema.spec.name}"
 		and $roleBinding.metadata.namespace == "${tenantNamespace.metadata.name}"
@@ -294,7 +327,7 @@ validate_platform() {
 		and $roleBinding.subjects[0].kind == "ServiceAccount"
 		and $roleBinding.subjects[0].name == "${serviceAccount.metadata.name}"
 		and $roleBinding.subjects[0].namespace == "${tenantNamespace.metadata.name}"
-		and ($kustomizationResource.includeWhen | join("|")) == "${schema.spec.source.reconcileApplication && !schema.spec.sops}"
+		and ($kustomizationResource.includeWhen | join("|")) == strenv(kustomization_when)
 		and .spec.schema.types.TenantSource.reconcileApplication == "boolean | default=true validation=\"self || !oldSelf\""
 		and $kustomization.kind == "Kustomization"
 		and $kustomization.metadata.namespace == "${tenantNamespace.metadata.name}"
@@ -303,7 +336,7 @@ validate_platform() {
 		and $kustomization.spec.sourceRef.name == "${ociRepository.metadata.name}"
 		and ($kustomization.spec.sourceRef | has("namespace") | not)
 		and $kustomization.spec.targetNamespace == "${tenantNamespace.metadata.name}"
-		and ($kustomizationSopsResource.includeWhen | join("|")) == "${schema.spec.source.reconcileApplication && schema.spec.sops}"
+		and ($kustomizationSopsResource.includeWhen | join("|")) == strenv(kustomization_sops_when)
 		and $kustomizationSops.kind == "Kustomization"
 		and $kustomizationSops.metadata.namespace == "${tenantNamespace.metadata.name}"
 		and $kustomizationSops.spec.serviceAccountName == "${serviceAccount.metadata.name}"
@@ -577,7 +610,8 @@ run_manual_subject_control() {
 # copies of the real Platform envelope, not examples searched for in the code.
 control_prefix='^https://github\.com/devantler-tech/'
 control_own_directory='/\.github/workflows/'
-control_own_file='[^/]+\.ya?ml'
+control_own_file='cd\.yaml'
+control_any_file='[^/]+\.ya?ml'
 control_own_ref='@refs/tags/v'
 control_own_semver='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?'
 control_own_tail=$control_own_directory$control_own_file$control_own_ref$control_own_semver
@@ -591,6 +625,10 @@ run_manual_subject_control 'own release of another repository' \
 	"${control_prefix}wedding-app${control_own_tail}\$" reject
 run_manual_subject_control 'own release of a repository sharing the tenant prefix' \
 	"${control_prefix}ascoachingogvaner-x${control_own_tail}\$" reject
+run_manual_subject_control 'own release from any workflow file' \
+	"${control_prefix}ascoachingogvaner${control_own_directory}${control_any_file}${control_own_ref}${control_own_semver}\$" reject
+run_manual_subject_control 'own release from another fixed workflow' \
+	"${control_prefix}ascoachingogvaner${control_own_directory}release\\.yaml${control_own_ref}${control_own_semver}\$" reject
 run_manual_subject_control 'own release in any workflow path' \
 	"${control_prefix}ascoachingogvaner${control_own_directory}.+\\.ya?ml${control_own_ref}${control_own_semver}\$" reject
 run_manual_subject_control 'own release on a branch' \
@@ -650,23 +688,33 @@ run_producer_control() {
 	producer_controls_run=$((producer_controls_run + 1))
 }
 
-# Literal CEL serialization of Platform's generic own-release rule: two string
-# literals around the regex-escaped Tenant name. Each rejected variant changes one part.
+# Literal CEL serialization of Platform's generic own-release rule: three string
+# literals around the regex-escaped Tenant name and the workflow choice.
+# Each rejected variant changes one part.
 # shellcheck disable=SC2016
 control_name_expression=' + schema.spec.name.replace(".", "\\.").replace("-", "\\-") + '
+# shellcheck disable=SC2016
+control_workflow_expression=' + (schema.spec.name == "business-site" ? "publish-runtime" : "cd") + '
+control_ref_tail="\\.yaml${control_own_ref}${control_own_semver}"
 # Encode one CEL string literal as JSON.
 cel_literal() { printf '%s' "$1" | jq -Rs .; }
 control_before=$(cel_literal "$control_prefix")
-control_after=$(cel_literal "${control_own_tail}\$")
+control_after="$(cel_literal "$control_own_directory")${control_workflow_expression}$(cel_literal "${control_ref_tail}\$")"
 control_generic="\${${control_before}${control_name_expression}${control_after}}"
 run_producer_control 'own-release rule accepts the starter' \
 	"$control_generic" accept
 run_producer_control 'loosened tenant tail' \
 	"\${${control_before}${control_name_expression}$(cel_literal '.+$')}" reject
 run_producer_control 'missing end anchor' \
-	"\${${control_before}${control_name_expression}$(cel_literal "$control_own_tail")}" reject
+	"\${${control_before}${control_name_expression}$(cel_literal "$control_own_directory")${control_workflow_expression}$(cel_literal "$control_ref_tail")}" reject
 run_producer_control 'branch instead of a release tag' \
-	"\${${control_before}${control_name_expression}$(cel_literal "${control_own_directory}${control_own_file}@refs/heads/${control_own_semver}\$")}" reject
+	"\${${control_before}${control_name_expression}$(cel_literal "$control_own_directory")${control_workflow_expression}$(cel_literal "\\.yaml@refs/heads/${control_own_semver}\$")}" reject
+run_producer_control 'retired any-workflow tail' \
+	"\${${control_before}${control_name_expression}$(cel_literal "${control_own_directory}${control_any_file}${control_own_ref}${control_own_semver}\$")}" reject
+run_producer_control 'workflow choice inverted' \
+	"\${${control_before}${control_name_expression}$(cel_literal "$control_own_directory") + (schema.spec.name == \"business-site\" ? \"cd\" : \"publish-runtime\") + $(cel_literal "${control_ref_tail}\$")}" reject
+run_producer_control 'any workflow directory' \
+	"\${${control_before}${control_name_expression}$(cel_literal '/.+/')${control_workflow_expression}$(cel_literal "${control_ref_tail}\$")}" reject
 run_producer_control 'another organization' \
 	"\${$(cel_literal '^https://github\.com/evil-tech/')${control_name_expression}${control_after}}" reject
 run_producer_control 'missing start anchor' \
@@ -701,6 +749,16 @@ run_mutation "KRO OCI stream widened to pre-releases" "$rgd_path" \
 	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semver) = ">=0.0.0-0"'
 run_mutation "KRO OCI stream filter widened" "$rgd_path" \
 	'(.spec.resources[] | select(.id == "ociRepository").template.spec.ref.semverFilter) = ".*"'
+# The preview guard (platform#6561) may only exclude a `<name>-dev` Tenant;
+# any other condition could drop the reconciler or rename the starter namespace.
+run_mutation "ServiceAccount gated by another condition" "$rgd_path" \
+	"(.spec.resources[] | select(.id == \"serviceAccount\").includeWhen) = [\"\${schema.spec.webApp}\"]"
+run_mutation "RoleBinding gated by another condition" "$rgd_path" \
+	"(.spec.resources[] | select(.id == \"roleBinding\").includeWhen) = [\"\${schema.spec.webApp}\"]"
+run_mutation "namespace named after the Tenant object" "$rgd_path" \
+	"(.spec.resources[] | select(.id == \"tenantNamespace\").template.metadata.name) = \"\${schema.metadata.name}\""
+run_mutation "application reconciliation excluded for every tenant" "$rgd_path" \
+	"(.spec.resources[] | select(.id == \"kustomization\").includeWhen) = [\"\${false}\"]"
 run_mutation "application reconciliation defaults off" "$rgd_path" \
 	'.spec.schema.types.TenantSource.reconcileApplication = "boolean | default=false"'
 run_mutation "application reconciliation deletion guard removed" "$rgd_path" \
