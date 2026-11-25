@@ -12,6 +12,13 @@ jobs:
     # Skipped in the template repo itself; runs in every application created from it.
     # The template is matched by its repository ID, which survives renames.
     if: github.repository_id != '1253884448'
+    # id-token: write lets the shared release workflow prove its identity to the
+    # GitHub token broker (devantler-tech/monorepo ADR 0020) instead of minting
+    # from the App key. Granting it is harmless until the workflow asks for it,
+    # and it must be here first: a reusable job that asks for more than its
+    # caller grants fails at startup.
+    permissions:
+      id-token: write
     uses: devantler-tech/.github/.github/workflows/create-release.yaml@946fff9cb37042f4c26c3342665727e28bd66c01 # v22.3.0
     with:
       disable-issue-side-effects: true
