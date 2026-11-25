@@ -53,6 +53,11 @@ validate_contract() {
 		"$template_sync_file" >/dev/null ||
 		fail 'template sync must merge the template ignore entries so an exclusion added here reaches tenants created before it'
 
+	yq eval -e \
+		'.jobs."template-sync".permissions."id-token" == "write"' \
+		"$template_sync_file" >/dev/null ||
+		fail 'template sync must grant id-token: write so the shared workflow can use the GitHub token broker'
+
 	yq eval -e '
 		[
 			.jobs."validate-scaffold".steps[]
@@ -154,6 +159,8 @@ run_mutation 'template-sync ignore-entry merge disabled' template-sync \
 	'.jobs."template-sync".with."merge-template-ignore-entries" = false'
 run_mutation 'template-sync ignore-entry merge removed' template-sync \
 	'del(.jobs."template-sync".with."merge-template-ignore-entries")'
+run_mutation 'template-sync broker identity removed' template-sync \
+	'del(.jobs."template-sync".permissions."id-token")'
 run_mutation 'required scaffold invocation removed' validation \
 	'del(.jobs."validate-scaffold".steps[] | select(.run == "sh scripts/workflow-caller-contract.test.sh"))'
 run_mutation 'reference ownership table marker removed' reference \
