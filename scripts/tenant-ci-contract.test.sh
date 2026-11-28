@@ -303,7 +303,7 @@ run_mutation "workflow permissions default removed" \
 	'del(.permissions)'
 # shellcheck disable=SC2016
 run_mutation "workflow secret environment added" \
-	'.env.TOKEN = "${{ secrets.APP_PRIVATE_KEY }}"'
+	'.env.TOKEN = "${{ secrets.GITHUB_TOKEN }}"'
 run_mutation "container build removed" \
 	'del(.jobs."delivery-inputs".steps[] | select((.run // "") == "docker build --tag tenant-delivery-check ."))'
 run_mutation "manifest render removed" \
@@ -319,13 +319,13 @@ run_mutation "extra action added" \
 	'.jobs."delivery-inputs".steps += [{"name": "Extra action", "uses": "example/action@0123456789abcdef0123456789abcdef01234567"}]'
 # shellcheck disable=SC2016
 run_mutation "secret environment added" \
-	'.jobs."delivery-inputs".steps[2].env.TOKEN = "${{ secrets.APP_PRIVATE_KEY }}"'
+	'.jobs."delivery-inputs".steps[2].env.TOKEN = "${{ secrets.GITHUB_TOKEN }}"'
 # shellcheck disable=SC2016
 run_mutation "secret action input added" \
-	'.jobs."delivery-inputs".steps[1].with.token = "${{ secrets.APP_PRIVATE_KEY }}"'
+	'.jobs."delivery-inputs".steps[1].with.token = "${{ secrets.GITHUB_TOKEN }}"'
 # shellcheck disable=SC2016
 run_mutation "bracket secret action input added" \
-	'.jobs."delivery-inputs".steps[1].with.token = "${{ secrets['\''APP_PRIVATE_KEY'\''] }}"'
+	'.jobs."delivery-inputs".steps[1].with.token = "${{ secrets['\''GITHUB_TOKEN'\''] }}"'
 run_mutation "delivery job no-op shell default added" \
 	'.jobs."delivery-inputs".defaults.run.shell = "echo {0}"'
 run_mutation "image build shell replaced with no-op" \

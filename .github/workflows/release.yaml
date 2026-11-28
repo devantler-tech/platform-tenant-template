@@ -19,8 +19,6 @@ jobs:
     # caller grants fails at startup.
     permissions:
       id-token: write
-    uses: devantler-tech/.github/.github/workflows/create-release.yaml@d45338f0ba120e87bdb05c1f70691afe2ec9d2ca # v22.7.5
+    uses: devantler-tech/.github/.github/workflows/create-release.yaml@832e6d37bfd0c0b39c855496efc128d2fdc2be2c # v22.9.0
     with:
       disable-issue-side-effects: true
-    secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}

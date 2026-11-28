@@ -27,12 +27,10 @@ jobs:
       contents: write
       pull-requests: write
       id-token: write
-    uses: devantler-tech/.github/.github/workflows/template-sync.yaml@d45338f0ba120e87bdb05c1f70691afe2ec9d2ca # v22.7.5
+    uses: devantler-tech/.github/.github/workflows/template-sync.yaml@832e6d37bfd0c0b39c855496efc128d2fdc2be2c # v22.9.0
     with:
       source-repo-path: devantler-tech/application-template
       use-app-token: true
       # Adds the entries of this template's .templatesyncignore that a tenant's copy lacks,
       # so an exclusion added here also reaches tenants created before it (#171).
       merge-template-ignore-entries: true
-    secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
